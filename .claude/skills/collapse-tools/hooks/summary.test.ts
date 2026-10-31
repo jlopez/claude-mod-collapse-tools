@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import {
   DEFAULT_DONE_COLOR,
   EXPANDED_LINES,
+  MARGIN,
   STATUS_COLOR,
   collapsedSegments,
   expandedSegments,
@@ -66,6 +67,17 @@ test('a done row shows no status word; other statuses end the row in their color
   expect(running[running.length - 1]).toMatchObject({ color: 'warning' })
   // Right-aligned to the width less the margin.
   expect(segmentsText(running)).toHaveLength(76)
+})
+
+test('a long summary fills the row up to the margin, before the right-aligned status word', () => {
+  const summary = 'w'.repeat(200)
+  const done = segmentsText(collapsedSegments(call, 80, undefined, summary))
+  expect(done).toHaveLength(80 - MARGIN)
+  expect(done.endsWith('...')).toBe(true)
+  const running = collapsedSegments({ ...call, isRunning: true }, 80, undefined, summary)
+  expect(segmentsText(running)).toHaveLength(80 - MARGIN)
+  expect(segmentsText(running).endsWith('running')).toBe(true)
+  expect(running[2]?.text.endsWith('...')).toBe(true)
 })
 
 test('the collapsed row is one line: the arg is cut to fit and the width falls back to 100', () => {

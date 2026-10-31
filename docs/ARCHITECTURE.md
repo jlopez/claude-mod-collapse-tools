@@ -19,7 +19,7 @@ Collapsed rows (**inferred** from `collapsedSegments` and the segment tests; the
 ```
 
 - `[+]` is dim. The tool name is in the done color (default `white`, not bold) for a finished call; `warning` bold while running, `error` bold on failure, `inactive` bold when interrupted. These are theme keys, so they follow the user's theme (**inferred**: `ThemeKey` in the declarations lists them; the README admits they were never checked in every theme).
-- The argument is dim. With summaries on (default) and the tool one of `Bash`, `Agent`, `Task`, `Monitor`, it is the call's own `description` input, cleaned and cut at 60 code points. Otherwise it is the first non-empty string among `command`, `file_path`, `path`, `pattern`, `description`, `title`, `op`, else the first string field at all.
+- The argument is dim. With summaries on (default) and the tool one of `Bash`, `Agent`, `Task`, `Monitor`, it is the call's own `description` input, cleaned but not cut; the row builder truncates it to the room left before the right-aligned status word. Otherwise it is the first non-empty string among `command`, `file_path`, `path`, `pattern`, `description`, `title`, `op`, else the first string field at all.
 - A status word (`running`, `error`, `interrupted`) is right-aligned in the status color. A done call shows none.
 - The row is cut to terminal width minus 4 columns (100 when the width is unknown) with `...`.
 - MCP tool names `mcp__server__tool` read `server:tool`.
@@ -109,7 +109,7 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 
 | File | Lines | Role |
 |---|---|---|
-| `.claude-plugin/plugin.json` | 34 | manifest, version `0.3.0`, two `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`), `types` pointer |
+| `.claude-plugin/plugin.json` | 34 | manifest, version `0.4.0`, two `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`), `types` pointer |
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
 | `hooks/register.tsx` | 216 | all `$` access: atoms, store I/O, the five hooks, JSX |
@@ -209,7 +209,7 @@ The returned `{ text }` is drawn as the command's output row and read by the mod
 - `collapsedSegments(call, columns, doneColor, summary?)`: builds `[+] `, the name, then budgets `width - name - GAP - wordRoom` for the argument. The argument is drawn only if at least 4 columns remain. The status word is padded to the right edge. A final `clipSegments` guarantees the total fits.
 - `expandedSegments(call, columns, doneColor)`: budget `columns × 6` characters. Main field in full (whitespace collapsed), then `extraFields` as `key: value` for string, number and boolean fields only (objects and arrays skipped, commit `bb02ed3`), each string value cut at 40, the list cut to fit.
 - `statusOf`: interrupted > error > running > done.
-- `describe(tool, input)`: null unless the tool is in `DESCRIBED_TOOLS` and `input.description` is a string that survives `cleanSummary` (control chars to spaces, format chars dropped, double quotes and backticks dropped, whitespace collapsed, leading and trailing quotes and punctuation stripped, cut at 60).
+- `describe(tool, input)`: null unless the tool is in `DESCRIBED_TOOLS` and `input.description` is a string that survives `cleanSummary` (control chars to spaces, format chars dropped, double quotes and backticks dropped, whitespace collapsed, leading and trailing quotes and punctuation stripped; the result is not cut, the row builder truncates it to the room left before the right-aligned status word).
 - `truncate` works on code points (`Array.from`), so a surrogate pair is never split; it does not account for East Asian wide characters or grapheme clusters, so a row of CJK or emoji can still overflow by display width (**inferred**).
 
 ## 4. Build and release path
@@ -244,7 +244,7 @@ When the engine hot-reloads a mod from a folder it watches, it also writes the s
 
 ```
 GitHub jlopez/claude-mods  (.claude-plugin/marketplace.json)
-   entry: name collapse-tools, source git-subdir, url jlopez/claude-mod-collapse-tools.git, path .claude/skills/collapse-tools, version 0.3.0
+   entry: name collapse-tools, source git-subdir, url jlopez/claude-mod-collapse-tools.git, path .claude/skills/collapse-tools, version 0.4.0
         │  claude plugin marketplace add jlopez/claude-mods
         ▼
 ~/.claude/plugins/marketplaces/claude-mods/            clone of the marketplace repo
@@ -266,6 +266,8 @@ Release cycle for a change (from the nursery notes, matching `reference.md`):
 1. Edit, `npm run check`, bump `version` in `plugin.json`, commit, PR, merge, push to the fork.
 2. Mirror `version` in the marketplace repo's `marketplace.json`, push.
 3. `claude plugin marketplace update claude-mods && claude plugin update collapse-tools@claude-mods`, then a new session.
+
+Testing a PR before release (**observed** 2026-10-30, 0.3.0 cache, Claude Code 2.1.309): copy the worktree's `.claude/skills/collapse-tools/` over the installed cache folder named by `installPath` in `~/.claude/plugins/installed_plugins.json`, keeping its `.in_use/` lock (`rsync -a --exclude=.in_use`), then `/reload-plugins` in the running session. The session picks up the new module without a restart, so a reviewer verifies the behavior in place. Back the cache folder up first; the next `claude plugin update` after a version bump replaces it anyway. This beats `--plugin-dir` because an installed plugin of the same name takes precedence over a `--plugin-dir` copy.
 
 Every installed plugin from a git or GitHub source "runs the copy made when it was installed"; edits reach a session only through a new version and `claude plugin update` then `/reload-plugins`. The exception the docs name is a marketplace that is a local folder with a relative-path entry, which is read in place and re-read on `/reload-plugins`. For development the shorter road is `claude --plugin-dir <abs path to .claude/skills/collapse-tools>`: the folder is watched and a save reloads the module when the folder goes quiet (or, when the model itself edits it, when the turn ends). An installed plugin of the same name takes precedence over a `--plugin-dir` copy, so uninstall while developing.
 
