@@ -13,6 +13,7 @@ import {
   statusOf,
   truncate,
 } from './summary'
+import { describe } from './summarize'
 
 const call = { tool: 'Bash', input: { command: 'ls -la' }, isRunning: false, isErrored: false, isInterrupted: false }
 const nameOf = (segments: ReturnType<typeof collapsedSegments>) => segments[1]
@@ -147,6 +148,37 @@ test('a multi-line command shows its first line in the header and every line in 
     '    timeout: 5',
   ])
   expect(open.fields[1]).toEqual([{ text: ' '.repeat(13) }, { text: '  indented  line', dim: true }])
+})
+
+test('a multi-line value keeps the indentation of its first line, so code stays aligned', () => {
+  const input = { file_path: 'a.ts', old_string: '\n    if (x) {\n      y()\n    }\n\n' }
+  const open = expandedRows({ ...call, tool: 'Edit', input }, 80)
+  expect(segmentsText(open.header)).toBe('[-] Edit  a.ts')
+  expect(lines(open.fields)).toEqual([
+    '    old_string:     if (x) {',
+    `${' '.repeat(16)}      y()`,
+    `${' '.repeat(16)}    }`,
+  ])
+  expect(open.fields[0]?.[2]).toEqual({ text: '    if (x) {', dim: true })
+})
+
+test('a lone carriage return breaks the line and other control characters but tab are dropped', () => {
+  const input = { command: "printf 'a\rb'", description: 'x\u001by\tz', blank: '\u0001 ' }
+  const open = expandedRows({ ...call, input }, 80)
+  expect(segmentsText(open.header)).toBe("[-] Bash  printf 'a")
+  expect(lines(open.fields)).toEqual(["    command:     printf 'a", `${' '.repeat(17)}b'`, '    description: xy\tz'])
+  expect(lines(open.fields).some(line => /[\r\u0000-\u0008\u000b-\u001f]/.test(line))).toBe(false)
+})
+
+test('a summary the cleaning changed does not stand for the description, which stays in the list', () => {
+  const input = { command: 'npm test', description: 'Run `npm test`\nthen lint.' }
+  const open = expandedRows({ ...call, input }, 80, undefined, describe('Bash', input) ?? undefined)
+  expect(segmentsText(open.header)).toBe('[-] Bash  Run npm test then lint')
+  expect(lines(open.fields)).toEqual([
+    '    command:     npm test',
+    '    description: Run `npm test`',
+    `${' '.repeat(17)}then lint.`,
+  ])
 })
 
 test('labels pad to the widest key, capped at 16 columns; a longer key gets one space', () => {

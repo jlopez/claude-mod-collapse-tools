@@ -189,9 +189,16 @@ function headerRow(
 }
 
 // A non-empty `summary` (the model-written description) is drawn where the arg would be; it stands
-// for the `description` field (see describe in summarize.ts).
-const summaryValue = (summary: string | undefined): MainValue | null =>
-  summary !== undefined && squash(summary) !== '' ? { text: squash(summary), key: 'description', whole: true } : null
+// for the `description` field (see describe in summarize.ts). It counts as that field whole only when
+// it is the raw description itself: cleaning (quotes, backticks, line breaks, end punctuation) did
+// not change it.
+function summaryValue(summary: string | undefined, input: unknown): MainValue | null {
+  if (summary === undefined || squash(summary) === '') return null
+  const text = squash(summary)
+  const raw = asRecord(input)?.['description']
+
+  return { text, key: 'description', whole: typeof raw === 'string' && raw.trim() === text }
+}
 
 // `[+] Name  arg            status`: the marker dim, the name bold in the status color, the arg dim
 // and cut to fit, the status word right-aligned and only when the call is not done. A non-empty
@@ -203,27 +210,41 @@ export function collapsedSegments(
   summary?: string,
 ): Segment[] {
   const field = pickArgField(call.input)
-  const main = summaryValue(summary) ?? (field === null ? null : { text: field.value, key: field.key, whole: false })
+  const main = summaryValue(summary, call.input) ?? (field === null ? null : { text: field.value, key: field.key, whole: false })
 
   return headerRow(call, columns, doneColor, MARKER_CLOSED, main).segments
 }
+
+// Any line break: CRLF, a lone LF, or a lone CR (which a terminal would draw as a return to column 0).
+const LINE_BREAK = /\r\n|\r|\n/
 
 // The picked arg as an expanded header draws it: a multi-line value shows its first line only.
 // It counts as whole when that line is the full value, as sent, with no whitespace to collapse.
 function expandedArg(field: ArgField): MainValue {
   const trimmed = field.raw.trim()
-  const lines = trimmed.split(/\r?\n/)
+  const lines = trimmed.split(LINE_BREAK)
   const text = squash(lines[0] ?? '')
 
   return { text, key: field.key, whole: lines.length === 1 && text === trimmed }
 }
 
+// Control characters a Text may not carry once lines are split: all but tab.
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g
+
+// A string value as drawn lines: its leading and trailing blank lines dropped, each line kept as sent
+// (indentation included, so code stays aligned) but for trailing whitespace and stray control characters.
+function stringLines(value: string): string[] {
+  const lines = value.split(LINE_BREAK).map(line => line.replace(CONTROL, '').trimEnd())
+  const first = lines.findIndex(line => line.trim() !== '')
+  if (first === -1) return []
+  const last = lines.length - 1 - [...lines].reverse().findIndex(line => line.trim() !== '')
+
+  return lines.slice(first, last + 1)
+}
+
 // unknown: the values of a tool input are whatever JSON the model sent.
 function fieldLines(value: unknown): string[] {
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    return trimmed === '' ? [] : trimmed.split(/\r?\n/).map(line => line.trimEnd())
-  }
+  if (typeof value === 'string') return stringLines(value)
   if (value === null) return ['null']
   if (typeof value === 'number' || typeof value === 'boolean') return [String(value)]
   if (typeof value === 'object') return [JSON.stringify(value)]
@@ -273,7 +294,7 @@ export function expandedRows(
   summary?: string,
 ): { header: Segment[]; fields: Segment[][] } {
   const field = pickArgField(call.input)
-  const main = summaryValue(summary) ?? (field === null ? null : expandedArg(field))
+  const main = summaryValue(summary, call.input) ?? (field === null ? null : expandedArg(field))
   const { segments, shown } = headerRow(call, columns, doneColor, MARKER_OPEN, main)
 
   return { header: segments, fields: fieldRows(call.input, shown) }

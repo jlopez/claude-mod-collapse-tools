@@ -69,6 +69,18 @@ test('an expanded Agent row keeps the engine row under the header; the status wo
   expect(JSON.stringify(await use.drawn())).toContain('"color":"white"')
 })
 
+test('an expanded Agent row draws no field list, even for fields the header does not show', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const use = await mountCall($, 'Agent', 'toolu_15', { description: 'Audit the auth flow', prompt: 'Read every file', subagent_type: 'general' })
+  await use.press({ key: 'collapse-tools:toolu_15' })
+  expect((await use.find({ type: 'Button' }))?.text).toBe('[-] Agent  Audit the auth flow')
+  const drawn = JSON.stringify(await use.drawn())
+  expect(drawn).toContain('engine row')
+  expect(drawn).not.toContain('prompt:')
+  expect(drawn).not.toContain('subagent_type:')
+  expect(drawn).not.toContain('"color":"suggestion"')
+})
+
 test('the startup hint toasts once per session, and only for an interactive session', async ($, on) => {
   const toasts: string[] = []
   // Stand-ins for what the engine answers beneath the plugin at start.
@@ -169,6 +181,17 @@ test('an expanded multi-line command draws each line under the header', async ($
   expect(texts).toContain('    command:     echo one')
   expect(texts).toContain(`${' '.repeat(17)}echo two`)
   expect(texts).toContain('    description: Echo twice')
+})
+
+test('a description the summary cleaned stays in the list with its raw text and line break', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const use = await mountCall($, 'Bash', 'toolu_16', { command: 'npm test', description: 'Run `npm test`\nthen lint' })
+  await use.press({ key: 'collapse-tools:toolu_16' })
+  expect((await use.find({ type: 'Button' }))?.text).toBe('[-] Bash  Run npm test then lint')
+  const texts = (await use.findAll({ type: 'Text' })).map(node => node.text)
+  expect(texts).toContain('    command:     npm test')
+  expect(texts).toContain('    description: Run `npm test`')
+  expect(texts).toContain(`${' '.repeat(17)}then lint`)
 })
 
 test('a collapsed Agent row shows its description', async ($, on) => {
