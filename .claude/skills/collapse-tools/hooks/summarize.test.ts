@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { MAX_SUMMARY, cleanSummary, describe, resolveSummaries } from './summarize'
+import { cleanSummary, describe, resolveSummaries } from './summarize'
 
-test('cleanSummary strips quotes and trailing punctuation, collapses whitespace and caps at 60 code points', () => {
+test('cleanSummary strips quotes and trailing punctuation, collapses whitespace and keeps the text in full', () => {
   expect(cleanSummary('  "Check repo\n status and fetch origin."  ')).toBe('Check repo status and fetch origin')
   expect(cleanSummary("'Load the auth middleware'!")).toBe('Load the auth middleware')
   expect(cleanSummary('...')).toBe('')
@@ -10,12 +10,11 @@ test('cleanSummary strips quotes and trailing punctuation, collapses whitespace 
   expect(cleanSummary('\u001b\u202e\u0007')).toBe('')
   expect(cleanSummary('Che\u200bck re\u202epo')).toBe('Check repo')
   expect(cleanSummary('a\u0007b')).toBe('a b')
-  expect(cleanSummary(`${'x'.repeat(58)}, tail`)).toBe('x'.repeat(58))
-  expect(cleanSummary(`${'x'.repeat(59)}. tail`)).toBe('x'.repeat(59))
-  const capped = cleanSummary('word '.repeat(40))
-  expect(Array.from(capped).length).toBeLessThanOrEqual(MAX_SUMMARY)
-  expect(capped.endsWith(' ')).toBe(false)
-  expect(Array.from(cleanSummary('\u{1F600}'.repeat(100)))).toHaveLength(MAX_SUMMARY)
+  expect(cleanSummary('x'.repeat(200))).toHaveLength(200)
+  expect(cleanSummary(`${'x'.repeat(58)}, tail`)).toBe(`${'x'.repeat(58)}, tail`)
+  const long = cleanSummary('word '.repeat(40))
+  expect(long).toBe('word '.repeat(40).trim())
+  expect(Array.from(cleanSummary('\u{1F600}'.repeat(100)))).toHaveLength(100)
 })
 
 test('summaries setting: saved beats the option, which beats the default of on', () => {
@@ -31,7 +30,7 @@ test('describe returns the cleaned description for Bash, Agent and Monitor', () 
   expect(describe('Agent', { prompt: 'long task body', description: '  Audit\nthe auth flow ' })).toBe('Audit the auth flow')
   expect(describe('Monitor', { command: 'tail -f x', description: 'Watch build output' })).toBe('Watch build output')
   expect(describe('Task', { prompt: 'p', description: 'Audit the auth flow' })).toBe('Audit the auth flow')
-  expect(describe('Bash', { description: 'x'.repeat(200) })).toHaveLength(MAX_SUMMARY)
+  expect(describe('Bash', { description: 'x'.repeat(200) })).toHaveLength(200)
 })
 
 test('describe is null for a tool off the allowlist even when its input has a description', () => {

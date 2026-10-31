@@ -19,7 +19,7 @@ Collapsed rows (**inferred** from `collapsedSegments` and the segment tests; the
 ```
 
 - `[+]` is dim. The tool name is in the done color (default `white`, not bold) for a finished call; `warning` bold while running, `error` bold on failure, `inactive` bold when interrupted. These are theme keys, so they follow the user's theme (**inferred**: `ThemeKey` in the declarations lists them; the README admits they were never checked in every theme).
-- The argument is dim. With summaries on (default) and the tool one of `Bash`, `Agent`, `Task`, `Monitor`, it is the call's own `description` input, cleaned and cut at 60 code points. Otherwise it is the first non-empty string among `command`, `file_path`, `path`, `pattern`, `description`, `title`, `op`, else the first string field at all.
+- The argument is dim. With summaries on (default) and the tool one of `Bash`, `Agent`, `Task`, `Monitor`, it is the call's own `description` input, cleaned but not cut; the row builder truncates it to the room left before the right-aligned status word. Otherwise it is the first non-empty string among `command`, `file_path`, `path`, `pattern`, `description`, `title`, `op`, else the first string field at all.
 - A status word (`running`, `error`, `interrupted`) is right-aligned in the status color. A done call shows none.
 - The row is cut to terminal width minus 4 columns (100 when the width is unknown) with `...`.
 - MCP tool names `mcp__server__tool` read `server:tool`.
@@ -209,7 +209,7 @@ The returned `{ text }` is drawn as the command's output row and read by the mod
 - `collapsedSegments(call, columns, doneColor, summary?)`: builds `[+] `, the name, then budgets `width - name - GAP - wordRoom` for the argument. The argument is drawn only if at least 4 columns remain. The status word is padded to the right edge. A final `clipSegments` guarantees the total fits.
 - `expandedSegments(call, columns, doneColor)`: budget `columns × 6` characters. Main field in full (whitespace collapsed), then `extraFields` as `key: value` for string, number and boolean fields only (objects and arrays skipped, commit `bb02ed3`), each string value cut at 40, the list cut to fit.
 - `statusOf`: interrupted > error > running > done.
-- `describe(tool, input)`: null unless the tool is in `DESCRIBED_TOOLS` and `input.description` is a string that survives `cleanSummary` (control chars to spaces, format chars dropped, double quotes and backticks dropped, whitespace collapsed, leading and trailing quotes and punctuation stripped, cut at 60).
+- `describe(tool, input)`: null unless the tool is in `DESCRIBED_TOOLS` and `input.description` is a string that survives `cleanSummary` (control chars to spaces, format chars dropped, double quotes and backticks dropped, whitespace collapsed, leading and trailing quotes and punctuation stripped; the result is not cut, the row builder truncates it to the room left before the right-aligned status word).
 - `truncate` works on code points (`Array.from`), so a surrogate pair is never split; it does not account for East Asian wide characters or grapheme clusters, so a row of CJK or emoji can still overflow by display width (**inferred**).
 
 ## 4. Build and release path

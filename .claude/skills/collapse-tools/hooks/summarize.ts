@@ -1,7 +1,5 @@
 export const SUMMARIES_STORE_KEY = 'summaries'
 
-export const MAX_SUMMARY = 60
-
 // Built-in tools whose input `description` field is documented as a short statement of what the call is
 // for (Bash: "Clear, concise description of what this command does"; Agent: "A short (3-5 word)
 // description of the task"; Monitor: "Short human-readable description of what you are monitoring").
@@ -12,13 +10,8 @@ const DESCRIBED_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Agent', 'Task', '
 
 const TRAILING = /[\s.,;:!?'‘’]+$/
 
-const cut = (text: string, max: number): string => {
-  const chars = Array.from(text)
-  return chars.length <= max ? text : chars.slice(0, max).join('')
-}
-
 export function cleanSummary(text: string): string {
-  const flat = text
+  return text
     .replace(/\p{Cc}/gu, ' ')
     .replace(/\p{Cf}/gu, '')
     .replace(/["`“”]/g, '')
@@ -26,7 +19,6 @@ export function cleanSummary(text: string): string {
     .trim()
     .replace(/^['‘’]+/, '')
     .replace(TRAILING, '')
-  return cut(flat, MAX_SUMMARY).replace(TRAILING, '')
 }
 
 // unknown: `saved` is an unvalidated store read and `option` is a plugin-option union, so both are narrowed here.
