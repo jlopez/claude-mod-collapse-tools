@@ -6,6 +6,7 @@ declare module 'claude-code' {
       hinted: boolean
       doneColorOverride: string | null
       summariesOn: boolean | null
+      syntaxPaletteOverride: string | null
       overrides: StateFamily<{ epoch: number; open: boolean }>
     }
   }

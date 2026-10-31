@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { DONE_COLOR_STORE_KEY, resolveDoneColor, validColor } from './accent'
+import { SYNTAX_PALETTE_STORE_KEY, resolveSyntaxPalette, validSyntaxPalette } from './shell'
 import { HINT_TEXT, collapsedSegments, expandedRows, isExpanded, keepsEngineRow } from './summary'
 import type { Segment } from './summary'
 import { SUMMARIES_STORE_KEY, describe, resolveSummaries } from './summarize'
@@ -15,6 +16,9 @@ const doneColorOverride = atom({ plugin: 'collapse-tools', key: 'doneColorOverri
 // The setting saved by `/collapse-tools summary on|off`, loaded from the plugin store; null defers to
 // the plugin option `summaries`.
 const summariesOn = atom({ plugin: 'collapse-tools', key: 'summariesOn' } as const, null as boolean | null)
+// The palette set by `/collapse-tools highlight`, loaded from the plugin store; null defers to the
+// plugin option `syntaxPalette`.
+const syntaxPaletteOverride = atom({ plugin: 'collapse-tools', key: 'syntaxPaletteOverride' } as const, null as string | null)
 // Per-call override family: each member is addressed by tool_use_id, so a click redraws only that call.
 const overrideRef = { plugin: 'collapse-tools', key: 'overrides' } as const
 
@@ -26,8 +30,10 @@ const openOf = (entry: Override | undefined, current: number): boolean | undefin
 
 const STORE_KEY = 'collapsed'
 const USAGE =
-  'Usage: /collapse-tools (toggle all) | /collapse-tools color <name|#hex|reset> | /collapse-tools summary on|off'
+  'Usage: /collapse-tools (toggle all) | /collapse-tools color <name|#hex|reset> | /collapse-tools summary on|off | /collapse-tools highlight <weight|status|off|reset>'
 const SUMMARY_USAGE = 'Usage: /collapse-tools summary on|off'
+const HIGHLIGHT_USAGE =
+  'Usage: /collapse-tools highlight <weight|status|off|reset> (weight: bold command and accented operators; status: strings green, variables yellow, command in the done color; off: no highlighting)'
 const unknownColorText = (value: string): string =>
   `Unknown color "${value}". Use a name (red, green, yellow, blue, magenta, cyan, white, gray, claude, or a ...Bright variant) or #rrggbb.`
 
@@ -40,13 +46,17 @@ async function loadSavedColor($: EngineInterface): Promise<void> {
   }
 }
 
-async function runColorCommand($: EngineInterface, value: string): Promise<{ text: string }> {
+// `configColor` is the plugin option's color, what a reset falls back to.
+async function runColorCommand($: EngineInterface, value: string, configColor: string): Promise<{ text: string }> {
   if (value.toLowerCase() === 'reset') {
     await update($, doneColorOverride, () => null)
     try {
       await $.store.delete(DONE_COLOR_STORE_KEY)
     } catch (error) {
       $.ui.log(`collapse-tools: color store delete failed ${String(error)}`, { to: 'debug' })
+      // Null would let the next turn.start reload the saved color the delete left behind; the option's
+      // color keeps the reset for the session.
+      await update($, doneColorOverride, () => configColor)
 
       return { text: 'Completed-call color reset for this session only; the saved color could not be cleared.' }
     }
@@ -94,6 +104,46 @@ async function runSummaryCommand($: EngineInterface, value: string): Promise<{ t
   return { text: `Row summaries ${label}. Saved for future sessions.` }
 }
 
+async function loadSavedPalette($: EngineInterface): Promise<void> {
+  try {
+    const saved = validSyntaxPalette(await $.store.get(SYNTAX_PALETTE_STORE_KEY))
+    if (saved !== null) await update($, syntaxPaletteOverride, () => saved)
+  } catch (error) {
+    $.ui.log(`collapse-tools: highlight load failed ${String(error)}`, { to: 'debug' })
+  }
+}
+
+// `configPalette` is the plugin option's palette, what a reset falls back to.
+async function runHighlightCommand($: EngineInterface, value: string, configPalette: string): Promise<{ text: string }> {
+  if (value.toLowerCase() === 'reset') {
+    await update($, syntaxPaletteOverride, () => null)
+    try {
+      await $.store.delete(SYNTAX_PALETTE_STORE_KEY)
+    } catch (error) {
+      $.ui.log(`collapse-tools: highlight store delete failed ${String(error)}`, { to: 'debug' })
+      // Null would let the next turn.start reload the saved choice the delete left behind; the option's
+      // palette keeps the reset for the session.
+      await update($, syntaxPaletteOverride, () => configPalette)
+
+      return { text: 'Shell command highlighting reset for this session only; the saved choice could not be cleared.' }
+    }
+
+    return { text: 'Shell command highlighting reset. The saved choice is cleared for future sessions.' }
+  }
+  const palette = validSyntaxPalette(value)
+  if (palette === null) return { text: HIGHLIGHT_USAGE }
+  await update($, syntaxPaletteOverride, () => palette)
+  try {
+    await $.store.set(SYNTAX_PALETTE_STORE_KEY, palette)
+  } catch (error) {
+    $.ui.log(`collapse-tools: highlight store write failed ${String(error)}`, { to: 'debug' })
+
+    return { text: `Shell command highlighting set to ${palette} for this session only; it could not be saved.` }
+  }
+
+  return { text: `Shell command highlighting set to ${palette}. Saved for future sessions.` }
+}
+
 // Loads the saved global choice; a store error or a non-boolean keeps the default (collapsed).
 async function loadSaved($: EngineInterface): Promise<void> {
   try {
@@ -109,15 +159,18 @@ async function loadSaved($: EngineInterface): Promise<void> {
 export const register: Register = (on, options) => {
   // Effective color = saved `/collapse-tools color` (doneColorOverride) ?? plugin option ?? default.
   const configColor = resolveDoneColor(null, options.doneColor)
+  // Effective palette = saved `/collapse-tools highlight` (syntaxPaletteOverride) ?? plugin option ?? weight.
+  const configPalette = resolveSyntaxPalette(null, options.syntaxPalette)
 
   on('session.start', async ($, e, next) => {
     await loadSaved($)
     await loadSavedColor($)
     await loadSavedSummaries($)
+    await loadSavedPalette($)
     await $.command.register({
       name: 'collapse-tools',
-      description: 'Toggle between one-line and full tool-call rows, or set the done color',
-      argumentHint: 'color <name|#hex|reset> | summary on|off',
+      description: 'Toggle between one-line and full tool-call rows, or set the done color, summaries or shell highlighting',
+      argumentHint: 'color <name|#hex|reset> | summary on|off | highlight <weight|status|off|reset>',
     })
     if (e.isInteractive && !(await read($, hinted))) {
       await update($, hinted, () => true)
@@ -133,6 +186,7 @@ export const register: Register = (on, options) => {
     // Atoms reset on /clear without a session.start, so reload the color when it is unset.
     if ((await read($, doneColorOverride)) === null) await loadSavedColor($)
     if ((await read($, summariesOn)) === null) await loadSavedSummaries($)
+    if ((await read($, syntaxPaletteOverride)) === null) await loadSavedPalette($)
 
     return next(e)
   })
@@ -140,8 +194,11 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'collapse-tools' }, async ($, e) => {
     const raw = e.args.trim()
     const word = raw.toLowerCase()
-    if (word === 'color' || word.startsWith('color ')) return runColorCommand($, raw.slice('color'.length).trim())
+    if (word === 'color' || word.startsWith('color ')) return runColorCommand($, raw.slice('color'.length).trim(), configColor)
     if (word === 'summary' || word.startsWith('summary ')) return runSummaryCommand($, raw.slice('summary'.length).trim())
+    if (word === 'highlight' || word.startsWith('highlight ')) {
+      return runHighlightCommand($, raw.slice('highlight'.length).trim(), configPalette)
+    }
     if (raw !== '') return { text: USAGE }
     const next = !(await read($, collapsed))
     await update($, collapsed, () => next)
@@ -159,14 +216,16 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const id = e.props.tool_use_id
     const member = { ...overrideRef, id }
-    const [global, current, entry, override, summariesFlag] = await Promise.all([
+    const [global, current, entry, override, summariesFlag, paletteOverride] = await Promise.all([
       read($, collapsed),
       read($, epoch),
       read($, member),
       read($, doneColorOverride),
       read($, summariesOn),
+      read($, syntaxPaletteOverride),
     ])
     const doneColor = override ?? configColor
+    const palette = resolveSyntaxPalette(paletteOverride, configPalette)
     const open = isExpanded(global, openOf(entry, current))
     const toggle = async () => {
       const [g, ep] = await Promise.all([read($, collapsed), read($, epoch)])
@@ -190,7 +249,7 @@ export const register: Register = (on, options) => {
 
     // Expanded: the header (a Button, so a click folds it back) replaces the engine's row, and the
     // input fields follow one per line. Tools whose own row may carry more keep that row instead.
-    const { header, fields } = expandedRows(call, columns, doneColor, summary)
+    const { header, fields } = expandedRows(call, columns, doneColor, summary, palette)
     if (keepsEngineRow(call.tool)) {
       return (
         <Box flexDirection="column">

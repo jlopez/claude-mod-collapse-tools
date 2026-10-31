@@ -1,4 +1,5 @@
-import { formatShell, isShellTool } from './shell'
+import { DEFAULT_SYNTAX_PALETTE, formatShell, isShellTool, styleTokens, tokenize } from './shell'
+import type { SyntaxPalette } from './shell'
 
 export const DEFAULT_COLUMNS = 100
 // Columns kept free at the right of a collapsed row (the engine's gutter and a cursor cell).
@@ -252,14 +253,21 @@ function shellLines(tool: string, key: string, value: unknown): string[] | null 
   return lines.length > 1 ? lines : null
 }
 
+// How row lines are drawn: the shell palette and the done color it may take.
+type LineStyle = { palette: SyntaxPalette; doneColor: string }
+
+const dimLine = (line: string): Segment[] => [{ text: line, dim: true }]
+
+// A field's drawn lines, each as its runs. A shell tool's one-line command laid out one clause per line
+// is highlighted under the palette (see styleTokens in shell.ts); every other line is one dim run.
 // unknown: the values of a tool input are whatever JSON the model sent.
-function fieldLines(tool: string, key: string, value: unknown): string[] {
+function fieldLines(tool: string, key: string, value: unknown, style: LineStyle): Segment[][] {
   const shell = shellLines(tool, key, value)
-  if (shell !== null) return shell
-  if (typeof value === 'string') return stringLines(value)
-  if (value === null) return ['null']
-  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)]
-  if (typeof value === 'object') return [JSON.stringify(value)]
+  if (shell !== null) return shell.map(line => styleTokens(tokenize(line), style.palette, style.doneColor))
+  if (typeof value === 'string') return stringLines(value).map(dimLine)
+  if (value === null) return [dimLine('null')]
+  if (typeof value === 'number' || typeof value === 'boolean') return [dimLine(String(value))]
+  if (typeof value === 'object') return [dimLine(JSON.stringify(value))]
 
   return []
 }
@@ -274,24 +282,24 @@ function orderedKeys(record: Record<string, unknown>): string[] {
 
 // One row of segments per drawn line: `    key:   value`, the label in KEY_COLOR padded so the values
 // line up, the value dim; each further line of a multi-line value is indented to the value column.
-// A shell tool's one-line `command` is laid out one clause per line (see shell.ts).
+// A shell tool's one-line `command` is laid out one clause per line and highlighted (see shell.ts).
 // `skip` is the field the header already drew whole.
-function fieldRows(tool: string, input: unknown, skip: string | null): Segment[][] {
+function fieldRows(tool: string, input: unknown, skip: string | null, style: LineStyle): Segment[][] {
   const record = asRecord(input)
   if (record === null) return []
   const fields = orderedKeys(record)
     .filter(key => key !== skip)
-    .map(key => ({ label: `${key}:`, lines: fieldLines(tool, key, record[key]) }))
+    .map(key => ({ label: `${key}:`, lines: fieldLines(tool, key, record[key], style) }))
     .filter(field => field.lines.length > 0)
   const labelWidth = Math.min(Math.max(0, ...fields.map(field => length(field.label))), MAX_KEY_WIDTH)
   const indent = ' '.repeat(FIELD_INDENT)
   const rows: Segment[][] = []
   for (const { label, lines } of fields) {
     const key = label + ' '.repeat(Math.max(labelWidth - length(label), 0) + 1)
-    const [first = '', ...rest] = lines
-    rows.push([{ text: indent }, { text: key, color: KEY_COLOR }, { text: first, dim: true }])
+    const [first = dimLine(''), ...rest] = lines
+    rows.push([{ text: indent }, { text: key, color: KEY_COLOR }, ...first])
     const continuation = ' '.repeat(FIELD_INDENT + length(key))
-    for (const line of rest) rows.push([{ text: continuation }, { text: line, dim: true }])
+    for (const line of rest) rows.push([{ text: continuation }, ...line])
   }
 
   return rows
@@ -299,18 +307,19 @@ function fieldRows(tool: string, input: unknown, skip: string | null): Segment[]
 
 // The expanded row: `header` is the collapsed row with the `[-]` marker (a multi-line value shows its
 // first line), and `fields` one line per input field under it, uncut. The field the header drew whole
-// is left out of the list.
+// is left out of the list. `palette` is how a shell command's clauses are highlighted.
 export function expandedRows(
   call: CallView,
   columns: number | undefined,
   doneColor: string = DEFAULT_DONE_COLOR,
   summary?: string,
+  palette: SyntaxPalette = DEFAULT_SYNTAX_PALETTE,
 ): { header: Segment[]; fields: Segment[][] } {
   const field = pickArgField(call.input)
   const main = summaryValue(summary, call.input) ?? (field === null ? null : expandedArg(field))
   const { segments, shown } = headerRow(call, columns, doneColor, MARKER_OPEN, main)
 
-  return { header: segments, fields: fieldRows(call.tool, call.input, shown) }
+  return { header: segments, fields: fieldRows(call.tool, call.input, shown, { palette, doneColor }) }
 }
 
 // For these tools the expanded view also draws the engine's own ToolUse row under the header.
