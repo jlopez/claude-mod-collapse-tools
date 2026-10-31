@@ -160,7 +160,8 @@ test('a collapsed Bash row shows the model description; expanding keeps it as th
   await use.press({ key: 'collapse-tools:toolu_5' })
   expect((await use.find({ type: 'Button' }))?.text).toBe('[-] Bash  Show git status head and last commit')
   const texts = (await use.findAll({ type: 'Text' })).map(node => node.text)
-  expect(texts).toContain('    command: git status && git log -1')
+  expect(texts).toContain('    command: git status')
+  expect(texts).toContain(`${' '.repeat(13)}&& git log -1`)
   expect(texts).toContain('    timeout: 5000')
   expect(texts.some(text => text.includes('description:'))).toBe(false)
   expect(JSON.stringify(await use.drawn())).toContain('"color":"suggestion"')
@@ -181,6 +182,17 @@ test('an expanded multi-line command draws each line under the header', async ($
   expect(texts).toContain('    command:     echo one')
   expect(texts).toContain(`${' '.repeat(17)}echo two`)
   expect(texts).toContain('    description: Echo twice')
+})
+
+test('an expanded one-line shell command draws each clause under the header', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const use = await mountCall($, 'Bash', 'toolu_15', { command: 'a && b', description: 'Run both.' })
+  await use.press({ key: 'collapse-tools:toolu_15' })
+  expect((await use.find({ type: 'Button' }))?.text).toBe('[-] Bash  Run both')
+  const texts = (await use.findAll({ type: 'Text' })).map(node => node.text)
+  expect(texts).toContain('    command:     a')
+  expect(texts).toContain(`${' '.repeat(17)}&& b`)
+  expect(texts).toContain('    description: Run both.')
 })
 
 test('a description the summary cleaned stays in the list with its raw text and line break', async ($, on) => {
