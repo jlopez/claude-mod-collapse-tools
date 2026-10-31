@@ -63,8 +63,9 @@ test('an expanded Agent row keeps the engine row under the header; the status wo
   on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
   const [use] = await mountTool($, 'Agent', 'toolu_2')
   await use.press({ key: 'collapse-tools:toolu_2' })
-  expect(await use.find({ text: '[-] Agent  ls' })).toBeDefined()
+  expect((await use.find({ type: 'Button' }))?.text).toBe('[-] Agent  ls')
   expect(JSON.stringify(await use.drawn())).toContain('engine row')
+  expect(JSON.stringify(await use.drawn())).not.toContain('command:')
   expect(JSON.stringify(await use.drawn())).toContain('"color":"white"')
 })
 
@@ -139,14 +140,35 @@ const mountCall = ($: Engine, tool: string, id: string, input: Record<string, un
 
 const GIT_CALL = { command: 'git status && git log -1', description: 'Show git status head and last commit' }
 
-test('a collapsed Bash row shows the model description instead of the command; expanding shows the raw command', async ($, on) => {
+test('a collapsed Bash row shows the model description; expanding keeps it as the header and lists the fields', async ($, on) => {
   on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
-  const use = await mountCall($, 'Bash', 'toolu_5', GIT_CALL)
+  const use = await mountCall($, 'Bash', 'toolu_5', { ...GIT_CALL, timeout: 5000 })
   expect(await use.find({ text: '[+] Bash  Show git status head and last commit' })).toBeDefined()
   expect(JSON.stringify(await use.drawn())).not.toContain('git status &&')
   await use.press({ key: 'collapse-tools:toolu_5' })
-  expect(JSON.stringify(await use.drawn())).toContain('[-] Bash  git status && git log -1')
-  expect(JSON.stringify(await use.drawn())).toContain('description: Show git status head and last commit')
+  expect((await use.find({ type: 'Button' }))?.text).toBe('[-] Bash  Show git status head and last commit')
+  const texts = (await use.findAll({ type: 'Text' })).map(node => node.text)
+  expect(texts).toContain('    command: git status && git log -1')
+  expect(texts).toContain('    timeout: 5000')
+  expect(texts.some(text => text.includes('description:'))).toBe(false)
+  expect(JSON.stringify(await use.drawn())).toContain('"color":"suggestion"')
+  expect(JSON.stringify(await use.drawn())).not.toContain('engine row')
+  await use.press({ key: 'collapse-tools:toolu_5' })
+  expect((await use.find({ type: 'Button' }))?.text).toBe('[+] Bash  Show git status head and last commit')
+  expect(JSON.stringify(await use.drawn())).not.toContain('command:')
+})
+
+test('an expanded multi-line command draws each line under the header', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('store.set', async () => ({ value: undefined }))
+  await $.command.run({ ...RUN, args: 'summary off' })
+  const use = await mountCall($, 'Bash', 'toolu_14', { command: 'echo one\necho two', description: 'Echo twice' })
+  await use.press({ key: 'collapse-tools:toolu_14' })
+  expect((await use.find({ type: 'Button' }))?.text).toBe('[-] Bash  echo one')
+  const texts = (await use.findAll({ type: 'Text' })).map(node => node.text)
+  expect(texts).toContain('    command:     echo one')
+  expect(texts).toContain(`${' '.repeat(17)}echo two`)
+  expect(texts).toContain('    description: Echo twice')
 })
 
 test('a collapsed Agent row shows its description', async ($, on) => {
