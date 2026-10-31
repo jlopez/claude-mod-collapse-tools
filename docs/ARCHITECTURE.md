@@ -109,7 +109,7 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 
 | File | Lines | Role |
 |---|---|---|
-| `.claude-plugin/plugin.json` | 34 | manifest, version `0.3.0`, two `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`), `types` pointer |
+| `.claude-plugin/plugin.json` | 34 | manifest, version `0.4.0`, two `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`), `types` pointer |
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
 | `hooks/register.tsx` | 216 | all `$` access: atoms, store I/O, the five hooks, JSX |
@@ -244,7 +244,7 @@ When the engine hot-reloads a mod from a folder it watches, it also writes the s
 
 ```
 GitHub jlopez/claude-mods  (.claude-plugin/marketplace.json)
-   entry: name collapse-tools, source git-subdir, url jlopez/claude-mod-collapse-tools.git, path .claude/skills/collapse-tools, version 0.3.0
+   entry: name collapse-tools, source git-subdir, url jlopez/claude-mod-collapse-tools.git, path .claude/skills/collapse-tools, version 0.4.0
         │  claude plugin marketplace add jlopez/claude-mods
         ▼
 ~/.claude/plugins/marketplaces/claude-mods/            clone of the marketplace repo
@@ -266,6 +266,8 @@ Release cycle for a change (from the nursery notes, matching `reference.md`):
 1. Edit, `npm run check`, bump `version` in `plugin.json`, commit, PR, merge, push to the fork.
 2. Mirror `version` in the marketplace repo's `marketplace.json`, push.
 3. `claude plugin marketplace update claude-mods && claude plugin update collapse-tools@claude-mods`, then a new session.
+
+Testing a PR before release (**observed** 2026-10-30, 0.3.0 cache, Claude Code 2.1.309): copy the worktree's `.claude/skills/collapse-tools/` over the installed cache folder named by `installPath` in `~/.claude/plugins/installed_plugins.json`, keeping its `.in_use/` lock (`rsync -a --exclude=.in_use`), then `/reload-plugins` in the running session. The session picks up the new module without a restart, so a reviewer verifies the behavior in place. Back the cache folder up first; the next `claude plugin update` after a version bump replaces it anyway. This beats `--plugin-dir` because an installed plugin of the same name takes precedence over a `--plugin-dir` copy.
 
 Every installed plugin from a git or GitHub source "runs the copy made when it was installed"; edits reach a session only through a new version and `claude plugin update` then `/reload-plugins`. The exception the docs name is a marketplace that is a local folder with a relative-path entry, which is read in place and re-read on `/reload-plugins`. For development the shorter road is `claude --plugin-dir <abs path to .claude/skills/collapse-tools>`: the folder is watched and a save reloads the module when the folder goes quiet (or, when the model itself edits it, when the turn ends). An installed plugin of the same name takes precedence over a `--plugin-dir` copy, so uninstall while developing.
 
