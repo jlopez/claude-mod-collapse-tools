@@ -273,3 +273,161 @@ test('a saved summaries=false is reloaded at turn.start when session.start did n
   expect(await use.find({ text: '[+] Bash  git status && git log -1' })).toBeDefined()
   expect(await use.find({ text: '[+] Bash  Show git status head and last commit' })).toBeUndefined()
 })
+
+// Expands a Bash row with a two-clause command and returns the Text runs drawn for the `&&` and the
+// second `git` (the command word of the continuation line).
+const expandGit = async ($: Engine, id: string) => {
+  const use = await mountCall($, 'Bash', id, GIT_CALL)
+  await use.press({ key: `collapse-tools:${id}` })
+  return use
+}
+
+test('highlight: the default weight palette draws the operator accented and the command bold', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const use = await expandGit($, 'toolu_20')
+  expect((await use.find({ type: 'Text', text: /^&&$/ }))?.props).toMatchObject({ color: 'suggestion' })
+  expect((await use.find({ type: 'Text', text: /^git$/ }))?.props).toMatchObject({ bold: true })
+  expect(JSON.stringify(await use.drawn())).not.toContain('"color":"success"')
+})
+
+test('highlight: with nothing saved and the default option, a drawn row uses weight, not status', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('store.get', async () => ({ value: undefined }))
+  const use = await mountCall($, 'Bash', 'toolu_25', { command: 'git status && echo "$HOME"', description: 'Show status and home' })
+  await use.press({ key: 'collapse-tools:toolu_25' })
+  const echo = await use.find({ type: 'Text', text: /^echo$/ })
+  expect(echo?.props).toMatchObject({ bold: true })
+  expect(echo?.props.color).toBeUndefined()
+  const home = await use.find({ type: 'Text', text: /^"\$HOME"$/ })
+  expect(home).toBeDefined()
+  expect(home?.props.color).toBeUndefined()
+  const drawn = JSON.stringify(await use.drawn())
+  expect(drawn).not.toContain('"color":"success"')
+  expect(drawn).not.toContain('"color":"warning"')
+})
+
+test('highlight: a choice that could not be saved applies now and survives turn.start', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('store.get', async (_$, e) => ({ value: e.key === 'syntaxPalette' ? 'off' : undefined }))
+  on('store.set', async () => {
+    throw new Error('disk full')
+  })
+  const use = await expandGit($, 'toolu_26')
+  const set = await $.command.run({ ...RUN, args: 'highlight status' })
+  expect(set.text).toBe('Shell command highlighting set to status for this session only; it could not be saved.')
+  expect((await use.find({ type: 'Text', text: /^git$/ }))?.props).toMatchObject({ bold: true, color: 'white' })
+  await $.turn.start({ text: 'hello', turnId: 'turn_3' })
+  expect((await use.find({ type: 'Text', text: /^git$/ }))?.props).toMatchObject({ bold: true, color: 'white' })
+  expect((await use.find({ type: 'Text', text: /^&&$/ }))?.props).toMatchObject({ color: 'suggestion' })
+})
+
+test('highlight: a reset whose store delete fails lasts past turn.start', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('store.get', async (_$, e) => ({ value: e.key === 'syntaxPalette' ? 'off' : undefined }))
+  on('store.delete', async () => {
+    throw new Error('disk full')
+  })
+  const use = await expandGit($, 'toolu_27')
+  await $.turn.start({ text: 'hello', turnId: 'turn_4' })
+  expect((await use.find({ type: 'Text', text: /^&& git log -1$/ }))?.props).toMatchObject({ dimColor: true })
+  const reset = await $.command.run({ ...RUN, args: 'highlight reset' })
+  expect(reset.text).toBe('Shell command highlighting reset for this session only; the saved choice could not be cleared.')
+  expect((await use.find({ type: 'Text', text: /^&&$/ }))?.props).toMatchObject({ color: 'suggestion' })
+  await $.turn.start({ text: 'again', turnId: 'turn_5' })
+  expect((await use.find({ type: 'Text', text: /^&&$/ }))?.props).toMatchObject({ color: 'suggestion' })
+  expect(await use.find({ type: 'Text', text: /^&& git log -1$/ })).toBeUndefined()
+})
+
+test('color: a reset whose store delete fails lasts past turn.start', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('store.get', async (_$, e) => ({ value: e.key === 'doneColor' ? 'magenta' : undefined }))
+  on('store.delete', async () => {
+    throw new Error('disk full')
+  })
+  const [use] = await mountTool($, 'Bash', 'toolu_28')
+  await $.turn.start({ text: 'hello', turnId: 'turn_6' })
+  expect(JSON.stringify(await use.drawn())).toContain('"color":"magenta"')
+  const reset = await $.command.run({ ...RUN, args: 'color reset' })
+  expect(reset.text).toBe('Completed-call color reset for this session only; the saved color could not be cleared.')
+  expect(JSON.stringify(await use.drawn())).not.toContain('"color":"magenta"')
+  await $.turn.start({ text: 'again', turnId: 'turn_7' })
+  expect(JSON.stringify(await use.drawn())).not.toContain('"color":"magenta"')
+  expect(JSON.stringify(await use.drawn())).toContain('"color":"white"')
+})
+
+test('highlight: the plugin option picks the palette when nothing is saved', { options: { syntaxPalette: 'status', doneColor: 'cyan' } }, async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('store.get', async () => ({ value: undefined }))
+  const use = await expandGit($, 'toolu_21')
+  expect((await use.find({ type: 'Text', text: /^git$/ }))?.props).toMatchObject({ bold: true, color: 'cyan' })
+})
+
+test('highlight subcommand: a valid palette is set and saved and the row redraws; an invalid one prints usage; reset clears', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const sets: Array<{ key: string; value: unknown }> = []
+  const deleted: string[] = []
+  on('store.set', async (_$, e) => {
+    sets.push({ key: e.key, value: e.value })
+    return { value: undefined }
+  })
+  on('store.delete', async (_$, e) => {
+    deleted.push(e.key)
+    return { value: undefined }
+  })
+  const use = await expandGit($, 'toolu_22')
+  expect((await use.find({ type: 'Text', text: /^&&$/ }))?.props).toMatchObject({ color: 'suggestion' })
+
+  const off = await $.command.run({ ...RUN, args: 'highlight OFF' })
+  expect(off.text).toBe('Shell command highlighting set to off. Saved for future sessions.')
+  expect(sets).toEqual([{ key: 'syntaxPalette', value: 'off' }])
+  expect(await use.find({ type: 'Text', text: /^&&$/ })).toBeUndefined()
+  expect((await use.find({ type: 'Text', text: /^&& git log -1$/ }))?.props).toMatchObject({ dimColor: true })
+
+  const bad = await $.command.run({ ...RUN, args: 'highlight rainbow' })
+  expect(bad.text).toContain('Usage: /collapse-tools highlight <weight|status|off|reset>')
+  expect((await $.command.run({ ...RUN, args: 'highlight' })).text).toContain('Usage: /collapse-tools highlight')
+  expect(sets).toHaveLength(1)
+
+  const reset = await $.command.run({ ...RUN, args: 'highlight reset' })
+  expect(reset.text).toBe('Shell command highlighting reset. The saved choice is cleared for future sessions.')
+  expect(deleted).toEqual(['syntaxPalette'])
+  expect((await use.find({ type: 'Text', text: /^&&$/ }))?.props).toMatchObject({ color: 'suggestion' })
+  expect((await $.command.run({ ...RUN, args: 'bogus' })).text).toContain('highlight <weight|status|off|reset>')
+})
+
+test('highlight subcommand: a store failure keeps the choice for this session only', async ($, on) => {
+  on('store.set', async () => {
+    throw new Error('disk full')
+  })
+  on('store.delete', async () => {
+    throw new Error('disk full')
+  })
+  const set = await $.command.run({ ...RUN, args: 'highlight status' })
+  expect(set.text).toBe('Shell command highlighting set to status for this session only; it could not be saved.')
+  const reset = await $.command.run({ ...RUN, args: 'highlight reset' })
+  expect(reset.text).toBe('Shell command highlighting reset for this session only; the saved choice could not be cleared.')
+})
+
+test('highlight: a saved palette beats the option at session.start', { options: { syntaxPalette: 'status' } }, async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', async () => ({ value: { command: 'collapse-tools' } }))
+  on('store.get', async (_$, e) => ({ value: e.key === 'syntaxPalette' ? 'off' : undefined }))
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: false })
+  const use = await expandGit($, 'toolu_23')
+  expect((await use.find({ type: 'Text', text: /^&& git log -1$/ }))?.props).toMatchObject({ dimColor: true })
+})
+
+test('highlight: a saved palette is reloaded at turn.start when session.start did not run (the /clear path)', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('store.get', async (_$, e) => ({ value: e.key === 'syntaxPalette' ? 'off' : undefined }))
+  const use = await expandGit($, 'toolu_24')
+  expect((await use.find({ type: 'Text', text: /^&&$/ }))?.props).toMatchObject({ color: 'suggestion' })
+  await $.turn.start({ text: 'hello', turnId: 'turn_2' })
+  expect(await use.find({ type: 'Text', text: /^&&$/ })).toBeUndefined()
+  expect((await use.find({ type: 'Text', text: /^&& git log -1$/ }))?.props).toMatchObject({ dimColor: true })
+})

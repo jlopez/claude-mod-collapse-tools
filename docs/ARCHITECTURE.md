@@ -32,7 +32,7 @@ Expanded row, after a click (**inferred**, asserted in tests):
     timeout: 120000
 ```
 
-The header is the collapsed row with `[-]` for `[+]` (same text, width budget and status word), except that a multi-line picked argument shows its first line only; so a click grows the row downward without changing its first line. Under it, one line per input field, indented 4: the `key:` label in the `suggestion` theme key, padded to the widest label (capped at 16 columns), then the value dim. `ARG_FIELDS` come first, then the input's own order. The field the header drew whole is left out (here `description`, drawn as the summary, which counts as whole only when cleaning left the raw description unchanged); a cut, multi-line or cleaned one stays. Strings keep their line breaks and every line's indentation, the first line's included (continuation lines are indented to the value column; leading and trailing blank lines, trailing spaces and control characters other than tab are dropped, and a lone CR breaks the line), objects and arrays are compact JSON, empty strings are skipped, and nothing is cut: a long line wraps at the terminal edge. Below the list the engine's normal `ToolResult` block is drawn. For `Agent`, `Task`, `AskUserQuestion`, `TodoWrite`, `ExitPlanMode` the field list is replaced by the engine's own `ToolUse` row, because those rows carry more than `Name(arg)` (a judgment from the types, not a live check, per the README).
+The header is the collapsed row with `[-]` for `[+]` (same text, width budget and status word), except that a multi-line picked argument shows its first line only; so a click grows the row downward without changing its first line. Under it, one line per input field, indented 4: the `key:` label in the `suggestion` theme key, padded to the widest label (capped at 16 columns), then the value dim (a `Bash`/`Monitor` command laid out one clause per line is highlighted instead; see the decision note in section 3). `ARG_FIELDS` come first, then the input's own order. The field the header drew whole is left out (here `description`, drawn as the summary, which counts as whole only when cleaning left the raw description unchanged); a cut, multi-line or cleaned one stays. Strings keep their line breaks and every line's indentation, the first line's included (continuation lines are indented to the value column; leading and trailing blank lines, trailing spaces and control characters other than tab are dropped, and a lone CR breaks the line), objects and arrays are compact JSON, empty strings are skipped, and nothing is cut: a long line wraps at the terminal edge. Below the list the engine's normal `ToolResult` block is drawn. For `Agent`, `Task`, `AskUserQuestion`, `TodoWrite`, `ExitPlanMode` the field list is replaced by the engine's own `ToolUse` row, because those rows carry more than `Name(arg)` (a judgment from the types, not a live check, per the README).
 
 Controls:
 
@@ -42,7 +42,10 @@ Controls:
 | `/collapse-tools` | flips the default for all calls, clears every per-call toggle | yes, store key `collapsed` |
 | `/collapse-tools color <name\|#hex\|reset>` | sets the done color | yes, store key `doneColor` |
 | `/collapse-tools summary on\|off` | row summaries | yes, store key `summaries` |
-| `/config` rows "Completed call color", "Row summaries" | plugin options, the fallback when nothing is saved | yes, `pluginConfigs` in settings |
+| `/collapse-tools highlight <weight\|status\|off\|reset>` | shell command highlighting palette | yes, store key `syntaxPalette` |
+| `/config` rows "Completed call color", "Row summaries", "Shell command highlighting" | plugin options, the fallback when nothing is saved | yes, `pluginConfigs` in settings |
+
+`userConfig` fields: `doneColor` (string, default `white`), `summaries` (boolean, default `true`), `syntaxPalette` (string with `options: ["weight", "status", "off"]`, so `/config` draws it as a choice row; default `weight`; `resolveSyntaxPalette` still validates it, case-insensitively, falling back to `weight`).
 
 Once per session, at start, an 8-second toast reads `click a [+] row to expand, /collapse-tools to toggle all` (**inferred**; a test asserts the text and the once-per-session guard).
 
@@ -88,9 +91,9 @@ Three tiers, each with a different lifetime:
 
 | Tier | API | Lifetime | Used here |
 |---|---|---|---|
-| module variables | plain `const` | until the next hot reload | only immutable constants and the `configColor` computed from `options` |
-| session state | `$.state.get/set`, or the `atom`/`read`/`update` helpers from `'claude-code'` | the session; reset by `/clear`; survives hot reload | `collapsed`, `epoch`, `hinted`, `doneColorOverride`, `summariesOn`, `overrides` family |
-| plugin store | `$.store.get/set/delete/keys` | across sessions; a JSON file under `~/.claude/plugins/store/` | `collapsed`, `doneColor`, `summaries` |
+| module variables | plain `const` | until the next hot reload | only immutable constants and the `configColor` and `configPalette` computed from `options` |
+| session state | `$.state.get/set`, or the `atom`/`read`/`update` helpers from `'claude-code'` | the session; reset by `/clear`; survives hot reload | `collapsed`, `epoch`, `hinted`, `doneColorOverride`, `summariesOn`, `syntaxPaletteOverride`, `overrides` family |
+| plugin store | `$.store.get/set/delete/keys` | across sessions; a JSON file under `~/.claude/plugins/store/` | `collapsed`, `doneColor`, `summaries`, `syntaxPalette` |
 
 Session state is the reactive layer. A `$.state.get` (or `read`) made *while a `ui.render` hook draws* subscribes that instance; a later `set` redraws exactly the readers. Writes are refused while drawing; they go in an `onPress` closure or another event. `update($, atom, fn)` reads, applies `fn`, writes with `ifVersion` and retries on a miss, so two presses before a redraw both land. A `StateFamily<T>` key holds one value per `id`; a reference `{ plugin, key, id }` addresses a member and a write to it redraws only that member's readers. `plugin` and `key` must be source literals so `claude plugin validate` can list them; only a family member's `id` may be computed.
 
@@ -111,16 +114,16 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 
 | File | Lines | Role |
 |---|---|---|
-| `.claude-plugin/plugin.json` | 34 | manifest, version `0.4.0`, two `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`), `types` pointer |
+| `.claude-plugin/plugin.json` | 41 | manifest, version `0.4.0`, three `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`, `syntaxPalette` choice default `weight`), `types` pointer |
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
-| `hooks/register.tsx` | 225 | all `$` access: atoms, store I/O, the five hooks, JSX |
-| `hooks/summary.ts` | 322 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, truncation, the keep-engine-row set, `isExpanded` |
-| `hooks/shell.ts` | 91 | pure: `SHELL_TOOLS`, `isShellTool`, `formatShell` (one clause per line at top-level `&&`, `||`, `|`, `|&`, `;`) |
-| `hooks/summarize.ts` | 46 | pure: the described-tools allowlist, `cleanSummary`, `describe`, `resolveSummaries` |
+| `hooks/register.tsx` | 284 | all `$` access: atoms, store I/O, the five hooks, JSX |
+| `hooks/summary.ts` | 331 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, truncation, the keep-engine-row set, `isExpanded` |
+| `hooks/shell.ts` | 376 | pure: `SHELL_TOOLS`, `isShellTool`, the one shell lexer (`scanShell`) and its two consumers: `formatShell` (one clause per line at top-level `&&`, `||`, `|`, `|&`, `;`) and `tokenize` (a clause line into `command`, `operator`, `string`, `variable`, `plain` runs); the palette tables, `styleTokens`, `resolveSyntaxPalette` |
+| `hooks/summarize.ts` | 38 | pure: the described-tools allowlist, `cleanSummary`, `describe`, `resolveSummaries` |
 | `hooks/accent.ts` | 21 | pure: color validation (`#rrggbb`, named, `...Bright`, `claude`), `resolveDoneColor` |
-| `hooks/*.test.ts` | 641 | 56 tests under `claude plugin test` |
-| `types/index.d.ts` | 12 | the state contract |
+| `hooks/*.test.ts` | 1046 | 83 tests across 5 files under `claude plugin test` |
+| `types/index.d.ts` | 13 | the state contract |
 | `README.md` (plugin folder) | | what the plugin directory review asks for: a per-hook description |
 
 The split is deliberate: `register.tsx` is the only file that touches `$`, the pure modules take data and return data, so they are unit-tested without an engine and `register.tsx` is tested through `$.ui.mount`.
@@ -134,6 +137,7 @@ The split is deliberate: `register.tsx` is the only file that touches `$`, the p
   hinted: boolean                                     // startup toast shown
   doneColorOverride: string | null                    // null defers to options.doneColor
   summariesOn: boolean | null                         // null defers to options.summaries
+  syntaxPaletteOverride: string | null                // null defers to options.syntaxPalette
   overrides: StateFamily<{ epoch: number; open: boolean }>  // per tool_use_id
 }
 ```
@@ -145,28 +149,30 @@ session.start
   ├─ loadSaved:          store.get('collapsed')  → update(collapsed) if boolean and different
   ├─ loadSavedColor:     store.get('doneColor')  → validColor → update(doneColorOverride)
   ├─ loadSavedSummaries: store.get('summaries')  → update(summariesOn) if boolean
+  ├─ loadSavedPalette:   store.get('syntaxPalette') → validSyntaxPalette → update(syntaxPaletteOverride)
   ├─ command.register('collapse-tools')
   └─ if e.isInteractive && !hinted: update(hinted, true); ui.toast(HINT_TEXT, 8000ms)
 ```
 
-Every store failure is caught and logged to the debug log; the in-session value stands. `configColor = resolveDoneColor(null, options.doneColor)` is computed once in `register`, outside any hook; it is the fallback when `doneColorOverride` is null.
+Every store failure is caught and logged to the debug log; the in-session value stands. `configColor = resolveDoneColor(null, options.doneColor)` and `configPalette = resolveSyntaxPalette(null, options.syntaxPalette)` are computed once in `register`, outside any hook; they are the fallbacks when `doneColorOverride` or `syntaxPaletteOverride` is null.
 
 ### Turn start, the `/clear` path
 
-`/clear` resets `$.state` but raises no `session.start`. So `turn.start` calls `loadSaved` on every turn and, when the color or summaries atom is null, reloads those too. Cost: one to three store reads per turn (**inferred**). A test covers the summaries case by mounting a row, firing `turn.start` with a mocked store, and checking the row changed.
+`/clear` resets `$.state` but raises no `session.start`. So `turn.start` calls `loadSaved` on every turn and, when the color, summaries or palette atom is null, reloads those too. Cost: one to four store reads per turn (**inferred**). Tests cover the summaries and palette cases by mounting a row, firing `turn.start` with a mocked store, and checking the row changed.
 
 ### Draw a tool row
 
 ```
 ui.render { component: 'ToolUse', requestId: tool_use_id, props: { tool, input, isRunning, isErrored, isInterrupted, output? }, viewport? }
   │
-  ├─ read collapsed, epoch, overrides[id], doneColorOverride, summariesOn   (5 subscriptions)
+  ├─ read collapsed, epoch, overrides[id], doneColorOverride, summariesOn, syntaxPaletteOverride   (6 subscriptions)
   ├─ open = overrides[id].epoch === epoch ? overrides[id].open : !collapsed
   ├─ summary = resolveSummaries(summariesOn, options.summaries) ? describe(tool, input) : null
+  ├─ palette = resolveSyntaxPalette(syntaxPaletteOverride, configPalette)
   ├─ button(segments) = <Button key=`collapse-tools:${id}` plain onPress={toggle}> {segments → <Text/>} </Button>
   │
   ├─ if !open:               return button(collapsedSegments(..., summary))       (engine row replaced, next() never called)
-  ├─ { header, fields } = expandedRows(..., summary)
+  ├─ { header, fields } = expandedRows(..., summary, palette)
   ├─ if keepsEngineRow(tool): return <Box column> {button(header)} {await next(e)} </Box>
   └─ else:                    return <Box column> {button(header)} {fields → <Text>{segments → <Text/>}</Text>} </Box>
 ```
@@ -176,6 +182,17 @@ The epoch trick: `/collapse-tools` does not clear the `overrides` family. It inc
 `toggle` re-reads `collapsed` and `epoch` at press time, not from the draw-time closure, then writes `{ epoch, open: !isExpanded(g, openOf(cur, ep)) }` to the member. This is the documented pattern: never write from a value captured at draw time.
 
 Inside `expandedRows`, `fieldRows` receives the tool: for a shell tool (`isShellTool`: `Bash`, `Monitor`) whose `command` is a string with no line break, `formatShell` splits it at top-level `&&`, `||`, `|`, `|&` and `;` and the operator leads each continuation line; if it yields one line, or the command has a line break, or the lexer ends inside a quote or bracket, the plain `stringLines` path runs. This is display-only and conservative (**inferred** from `shell.test.ts` and `summary.test.ts`; not checked in a live session). The collapsed row and the header are unchanged, including the "drawn whole" skip rule.
+
+`expandedRows` also takes the palette and passes it, with the done color, down to `fieldLines`: each clause line of a split command becomes `styleTokens(tokenize(line), palette, doneColor)`, several styled runs in place of the one dim run. `tokenize` reads the line with the same lexer as `formatShell` (`scanShell`, one character walker that reports frame opens and closes, escapes and plain characters to a callback), so the two cannot disagree about where a quote or substitution ends; its runs always join back to the line, so the drawn text is byte-identical to the unhighlighted layout. The label column, the indents and every other path (a single clause, a line break, an unterminated quote, any non-shell field) are unchanged: one dim run per line. Under `off`, `styleTokens` merges every run into one dim run, the pre-highlighting look.
+
+### Decision note: the `weight` highlighting palette
+
+Decided with the user before implementation; recorded here so the next room does not relitigate it.
+
+- **Chosen: `weight` (the default).** Weight plus one accent: the command word bold, the connecting operator in the `suggestion` theme key (the accent the `key:` labels already use), strings and variables at full brightness, everything else dim. It uses none of the status theme keys `success`, `warning`, `error`; a test in `shell.test.ts` asserts it.
+- **Rejected as the default, kept selectable: `status`.** Status colors for syntax: strings `success` (green), variables `warning` (yellow), the command word in the done color, operators accented. Two status theme keys in all; `error` is never used.
+- **Why.** These rows right-align a status word in a status color (`running` in `warning`, `error` in `error`), and the tool name carries the done color. Coloring strings green (`success`, which reads as "done") or variables yellow (the same `warning` key as `running`) makes syntax and status speak the same language within one row, so a reader cannot tell at a glance whether a yellow run is a variable or a running call. Status hues also degrade badly on light themes (yellow on white) and for colour-blind readers (green against red), while bold and dim survive both. So the semantic/status palette is reserved for the row's status word only, never for syntax.
+- `off` keeps the all-dim look from before highlighting for anyone who wants none.
 
 The field lines sit outside the Button, as siblings in the column Box, because a Button's children must be strings or Text; only the header is clickable. When the engine row is replaced (`!open`, or an expanded tool outside the keep set), `next(e)` is never called, so no plugin beneath this one and none of the engine's own `ToolUse` drawing runs for that row.
 
@@ -204,16 +221,19 @@ ui.press { element: 'collapse-tools:<id>' }  →  engine runs the Button's onPre
 command.run { command: 'collapse-tools', args }
   ├─ 'color <x>'      → validColor; update(doneColorOverride); store.set('doneColor') | 'reset' → null; store.delete
   ├─ 'summary on|off' → update(summariesOn); store.set('summaries')
+  ├─ 'highlight <p>'  → validSyntaxPalette; update(syntaxPaletteOverride); store.set('syntaxPalette') | 'reset' → null; store.delete | invalid → HIGHLIGHT_USAGE
   ├─ anything else    → { text: USAGE }
   └─ ''               → next = !collapsed; update(collapsed); update(epoch, n+1); store.set('collapsed'); { text }
 ```
 
-The returned `{ text }` is drawn as the command's output row and read by the model. Every write to the color or summaries atom redraws every row, since every row reads both.
+The returned `{ text }` is drawn as the command's output row and read by the model. Every write to the color, summaries or palette atom redraws every row, since every row reads all three.
 
 ### The pure functions
 
 - `collapsedSegments(call, columns, doneColor, summary?)`: a thin wrapper over the private `headerRow` with the `[+]` marker. `headerRow` builds the marker, the name, then budgets `width - name - GAP - wordRoom` for the argument. The argument is drawn only if at least 4 columns remain. The status word is padded to the right edge. A final `clipSegments` guarantees the total fits. It also reports which field it drew whole (the summary stands for `description`, whole only when it equals the trimmed raw `input.description`).
-- `expandedRows(call, columns, doneColor, summary?)`: returns `{ header, fields }`. `header` is `headerRow` with `[-]`; without a summary the picked arg goes through `expandedArg`, which keeps the first line of a multi-line value and counts it whole only when that line equals the trimmed raw value. `fields` (from `fieldRows`) is one `Segment[]` per drawn line: `{ text: '    ' }`, `{ text: 'key:' + pad, color: 'suggestion' }`, `{ text: value, dim: true }`, and `[{ indent }, { line, dim }]` for each continuation line. Order is `ARG_FIELDS` then insertion order; the field `headerRow` drew whole is skipped; values are uncut. String values go through `stringLines`: split on CRLF, LF or a lone CR, control characters but tab dropped, each line `trimEnd`ed, leading and trailing blank lines dropped, leading indentation kept.
+- `expandedRows(call, columns, doneColor, summary?, palette = 'weight')`: returns `{ header, fields }`. `header` is `headerRow` with `[-]`; without a summary the picked arg goes through `expandedArg`, which keeps the first line of a multi-line value and counts it whole only when that line equals the trimmed raw value. `fields` (from `fieldRows`) is one `Segment[]` per drawn line: `{ text: '    ' }`, `{ text: 'key:' + pad, color: 'suggestion' }`, `{ text: value, dim: true }`, and `[{ indent }, { line, dim }]` for each continuation line. Order is `ARG_FIELDS` then insertion order; the field `headerRow` drew whole is skipped; values are uncut. String values go through `stringLines`: split on CRLF, LF or a lone CR, control characters but tab dropped, each line `trimEnd`ed, leading and trailing blank lines dropped, leading indentation kept. A shell command split into clauses replaces the one `{ value, dim }` run of each line with the styled runs of `styleTokens`.
+- `tokenize(line)`: `Token[]` of kinds `command`, `operator`, `string`, `variable`, `plain`; the texts join to the line. A leading `&&`/`||`/`|&`/`|`/`;` is the operator; the first word wholly outside every frame that is not an assignment (words split at unescaped whitespace, so `my\ tool` is one word) is the command, unless it starts with `;&|<>` or holds an unescaped `<` or `>` (`2>/dev/null`, `ls>out`: a redirection, so no command is marked); single quotes are a string, and so is an ANSI-C `$'...'` with its `$`; double quotes a string with `$name`/`${...}`/`$(...)`/backtick spans split out as variables; a backtick span is a variable (old-style command substitution); groups `( )`, `{ }`, `[[ ]]` are transparent. Redirections are plain (parked); so is a `#` comment, from a top-level unescaped `#` that starts a word to the end of the line, variables inside it included (a `comment` kind is parked). A line that ends inside a frame is one plain token.
+- `styleTokens(tokens, palette, doneColor)`: maps each kind through `paletteStyles(palette, doneColor)` to a `Segment`, merging neighbours of the same style.
 - `statusOf`: interrupted > error > running > done.
 - `describe(tool, input)`: null unless the tool is in `DESCRIBED_TOOLS` and `input.description` is a string that survives `cleanSummary` (control chars to spaces, format chars dropped, double quotes and backticks dropped, whitespace collapsed, leading and trailing quotes and punctuation stripped; the result is not cut, the row builder truncates it to the room left before the right-aligned status word).
 - `truncate` works on code points (`Array.from`), so a surrogate pair is never split; it does not account for East Asian wide characters or grapheme clusters, so a row of CJK or emoji can still overflow by display width (**inferred**).
@@ -230,7 +250,7 @@ npm run check  =  claude plugin validate .claude/skills/collapse-tools
                && claude plugin test .claude/skills/collapse-tools
 ```
 
-**Observed** on this branch: all three pass, 34 tests across 4 files in about half a second.
+**Observed** on this branch: all three pass, 83 tests across 5 files in about half a second.
 
 - `validate` parses the manifest and the module source the way the engine will, and lists every event hooked, every `$` call and every `$.state` key against the contract.
 - `tsc` type-checks against `vendor/claude-code/claude-code.d.ts`. `tsconfig.json` sets `types: []` (no `@types/node`; the module has no Node), `jsx: react` with `jsxFactory: h`, `moduleResolution: bundler`, strict plus `noUncheckedIndexedAccess`, and includes the vendor file, `hooks/`, `types/` and the tests.
@@ -308,7 +328,8 @@ Places a change plugs in, and rough edges seen while tracing.
 ### Plug-in points
 
 - **Row text.** `collapsedSegments` and `expandedRows` in `summary.ts` are pure and return `Segment[]` (one per line for the field list); any change to what a row says is a change there plus a test in `summary.test.ts`. `ARG_FIELDS` order and `MIN_ARG`, `MARGIN`, `FIELD_INDENT`, `MAX_KEY_WIDTH`, `KEY_COLOR` are the knobs.
-- **Shell command layout.** `formatShell` and `SHELL_TOOLS` in `shell.ts`: add a tool whose `command` is a shell command to `SHELL_TOOLS`; the separators and the bracket/quote handling are in the one lexer loop, tested in `shell.test.ts`. The wiring is `shellLines` in `summary.ts`; dropping the no-line-break rule is a one-line change there.
+- **Shell command layout.** `formatShell` and `SHELL_TOOLS` in `shell.ts`: add a tool whose `command` is a shell command to `SHELL_TOOLS`; the bracket/quote handling is in the one lexer, `scanShell`, and the separators in its `formatShell` consumer, tested in `shell.test.ts`. The wiring is `shellLines` in `summary.ts`; dropping the no-line-break rule is a one-line change there.
+- **Shell highlighting.** The `PALETTES` table in `shell.ts` is the switch point: one `TokenKind → TokenStyle` table per palette (`status` a function of the done color). A new look is a new entry plus its name in `SyntaxPalette`, `SYNTAX_PALETTES` and the `options` of the `syntaxPalette` field in `plugin.json`. What counts as which kind is `tokenize`; the parked follow-ups are a `comment` kind for `#` and a redirection kind, both `plain` today. Keep `weight` free of `success`/`warning`/`error` (see the decision note in section 3).
 - **Which tools get a summary.** `DESCRIBED_TOOLS` in `summarize.ts`. Note that for `Agent` the summary path changes little: `description` is already in `ARG_FIELDS` and `Agent` input has no `command`/`file_path`, so with summaries off the same text shows, uncleaned. The summary setting really only affects `Bash` (whose `command` wins otherwise) and `Monitor`.
 - **Which tools keep the engine row when expanded.** `KEEP_ENGINE_ROW` in `summary.ts`.
 - **ctrl+o and `--verbose`.** `ToolUse` and `ToolResult` props carry `isExpanded?: boolean` as of 2.1.309 (absent in the vendored 2.1.295 types). The documented pattern is: a hook that draws a compact row returns `next(e)` when `isExpanded` is true. One guard at the top of each render hook removes the "ctrl+o does not unfold these rows" limitation. It needs the vendored types regenerated, and a decision about whether to keep the fold inside the ctrl+o view too.
@@ -327,7 +348,7 @@ Places a change plugs in, and rough edges seen while tracing.
 - **`Box display="none"` leaves the transcript's inter-message margin.** The README calls this out; it is engine-side.
 - **The `done` default of `white`** is not a theme key, so on a light theme the name of a finished call is white on light (**inferred**; the README's "not verified in every theme" admission).
 - **The vendored types lag the running build** (2.1.295 vs 2.1.309). The gap is small today and the mod loads and tests fine under 2.1.309 (**observed**), but any lever that uses a new prop needs the regeneration step first.
-- **`register` reads `options.doneColor` once.** Correct because a `/config` change reloads the module, but a reader of the code may expect it inside a hook.
+- **`register` reads `options.doneColor` and `options.syntaxPalette` once.** Correct because a `/config` change reloads the module, but a reader of the code may expect it inside a hook.
 - **Author metadata** still names upstream; the top-level README's badges and install lines point at `0xnicholasy/claude-mods`, while the marketplace that actually installs it is `jlopez/claude-mods` (nursery notes list this as a pending doc fix).
 - **CI triggers** cover `main` and `feat/**` only; a `docs/**` or `fix/**` branch push runs nothing, though a PR against `main` still does.
 

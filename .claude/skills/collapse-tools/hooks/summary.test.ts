@@ -229,3 +229,67 @@ test('a Bash or Monitor command with no line break is laid out one clause per li
   expect(texts('mcp__x__y', 'a && b')).toEqual(['    command: a && b'])
   expect(texts('Bash', 'a && b\nc')).toEqual(['    command: a && b', '             c'])
 })
+
+test('an expanded multi-clause shell command is highlighted under weight; label and indents are unchanged', () => {
+  const input = { command: 'git status && git log -1 "$REF"', description: 'Show git' }
+  const open = expandedRows({ ...call, input }, 80, undefined, 'Show git')
+  expect(lines(open.fields)).toEqual(['    command: git status', '             && git log -1 "$REF"'])
+  expect(open.fields[0]).toEqual([
+    { text: '    ' },
+    { text: 'command: ', color: 'suggestion' },
+    { text: 'git', bold: true },
+    { text: ' status', dim: true },
+  ])
+  expect(open.fields[1]).toEqual([
+    { text: ' '.repeat(13) },
+    { text: '&&', color: 'suggestion' },
+    { text: ' ', dim: true },
+    { text: 'git', bold: true },
+    { text: ' log -1 ', dim: true },
+    { text: '"$REF"' },
+  ])
+  // Monitor commands take the same path.
+  expect(expandedRows({ ...call, tool: 'Monitor', input }, 80, undefined, 'Show git').fields[1]?.[1]).toEqual({
+    text: '&&',
+    color: 'suggestion',
+  })
+})
+
+test('the single-clause, multi-line and unterminated commands and non-shell fields stay one dim run per line', () => {
+  const dimRuns = (rows: ReturnType<typeof expandedRows>['fields']) => rows.map(row => row.slice(-1))
+  const single = expandedRows({ ...call, input: { command: 'git status' } }, 80, undefined, 'Do it')
+  expect(single.fields[0]?.[2]).toEqual({ text: 'git status', dim: true })
+  const multi = expandedRows({ ...call, input: { command: 'a && b\nc' } }, 80, undefined, 'Do it')
+  expect(dimRuns(multi.fields)).toEqual([[{ text: 'a && b', dim: true }], [{ text: 'c', dim: true }]])
+  const open = expandedRows({ ...call, input: { command: "echo 'a && b" } }, 80, undefined, 'Do it')
+  expect(open.fields[0]?.[2]).toEqual({ text: "echo 'a && b", dim: true })
+  const other = expandedRows({ ...call, tool: 'mcp__x__y', input: { command: 'a && b' } }, 80, undefined, 'Do it')
+  expect(other.fields).toEqual([[{ text: '    ' }, { text: 'command: ', color: 'suggestion' }, { text: 'a && b', dim: true }]])
+  const field = expandedRows({ ...call, input: { command: 'ls', note: 'x && y' } }, 80)
+  expect(field.fields).toEqual([[{ text: '    ' }, { text: 'note: ', color: 'suggestion' }, { text: 'x && y', dim: true }]])
+})
+
+test('the palette threads from expandedRows: off is all dim, status takes the done color; the header is unchanged', () => {
+  const input = { command: 'a && b "s"' }
+  const c = { ...call, input }
+  const off = expandedRows(c, 80, 'cyan', 'Do it', 'off')
+  expect(off.fields).toEqual([
+    [{ text: '    ' }, { text: 'command: ', color: 'suggestion' }, { text: 'a', dim: true }],
+    [{ text: ' '.repeat(13) }, { text: '&& b "s"', dim: true }],
+  ])
+  const status = expandedRows(c, 80, 'cyan', 'Do it', 'status')
+  expect(status.fields[1]).toEqual([
+    { text: ' '.repeat(13) },
+    { text: '&&', color: 'suggestion' },
+    { text: ' ', dim: true },
+    { text: 'b', bold: true, color: 'cyan' },
+    { text: ' ', dim: true },
+    { text: '"s"', color: 'success' },
+  ])
+  // The default is weight.
+  expect(expandedRows(c, 80, 'cyan', 'Do it').fields).toEqual(expandedRows(c, 80, 'cyan', 'Do it', 'weight').fields)
+  for (const palette of ['weight', 'status', 'off'] as const) {
+    expect(expandedRows(c, 80, 'cyan', 'Do it', palette).header).toEqual(expandedRows(c, 80, 'cyan', 'Do it').header)
+    expect(lines(expandedRows(c, 80, 'cyan', 'Do it', palette).fields)).toEqual(['    command: a', '             && b "s"'])
+  }
+})

@@ -29,6 +29,13 @@
       "title": "Row summaries",
       "description": "Show the description the model wrote for a call (Bash, Agent, Monitor) instead of the raw argument on collapsed rows. Default on.",
       "default": true
+    },
+    "syntaxPalette": {
+      "type": "string",
+      "title": "Shell command highlighting",
+      "description": "How an expanded Bash or Monitor row highlights its command: weight (bold command word and accented operators, the default), status (strings green, variables yellow, the command word in the completed-call color), or off (no highlighting, all dim).",
+      "default": "weight",
+      "options": ["weight", "status", "off"]
     }
   }
 }
