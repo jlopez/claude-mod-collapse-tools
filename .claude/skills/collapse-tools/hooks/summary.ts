@@ -5,10 +5,12 @@ export const MARGIN = 4
 const GAP = 2
 // An arg shorter than this is not worth drawing beside the name.
 const MIN_ARG = 4
-// The expanded header may take about this many terminal lines of text.
-export const EXPANDED_LINES = 6
-// One extra `key: value` is cut to this many characters before the whole list is capped.
-const MAX_EXTRA_VALUE = 40
+// Each field line of an expanded row starts this far in.
+export const FIELD_INDENT = 4
+// A `key:` label is padded to the widest label of the row, but not past this many columns.
+export const MAX_KEY_WIDTH = 16
+// Theme key the `key:` labels of an expanded row are drawn in.
+export const KEY_COLOR = 'suggestion'
 
 export const MARKER_CLOSED = '[+]'
 export const MARKER_OPEN = '[-]'
@@ -85,18 +87,19 @@ function asRecord(input: unknown): Record<string, unknown> | null {
   return input as Record<string, unknown>
 }
 
-type ArgField = { key: string; value: string }
+// `raw` is the value as the model sent it; `value` the same with whitespace collapsed.
+type ArgField = { key: string; value: string; raw: string }
 
-// The most telling string field of the input, whitespace collapsed, in full; null when none.
+// The most telling string field of the input, in full; null when none.
 function pickArgField(input: unknown): ArgField | null {
   const record = asRecord(input)
   if (record === null) return null
   for (const key of ARG_FIELDS) {
     const value = record[key]
-    if (typeof value === 'string' && squash(value) !== '') return { key, value: squash(value) }
+    if (typeof value === 'string' && squash(value) !== '') return { key, value: squash(value), raw: value }
   }
   for (const [key, value] of Object.entries(record)) {
-    if (typeof value === 'string' && squash(value) !== '') return { key, value: squash(value) }
+    if (typeof value === 'string' && squash(value) !== '') return { key, value: squash(value), raw: value }
   }
   return null
 }
@@ -104,23 +107,6 @@ function pickArgField(input: unknown): ArgField | null {
 // The most telling string field of the input, whitespace collapsed; '' when none.
 export function pickArg(input: unknown): string {
   return pickArgField(input)?.value ?? ''
-}
-
-// unknown: the values of a tool input are whatever JSON the model sent.
-function extraFields(input: unknown, skip: string | undefined): string {
-  const record = asRecord(input)
-  if (record === null) return ''
-  const parts: string[] = []
-  for (const [key, value] of Object.entries(record)) {
-    if (key === skip) continue
-    if (typeof value === 'string') {
-      const text = squash(value)
-      if (text !== '') parts.push(`${key}: ${truncate(text, MAX_EXTRA_VALUE)}`)
-    } else if (typeof value === 'number' || typeof value === 'boolean') {
-      parts.push(`${key}: ${String(value)}`)
-    }
-  }
-  return parts.join(', ')
 }
 
 // An abort wins over an error, an error over running.
@@ -162,6 +148,58 @@ function clipSegments(segments: readonly Segment[], width: number): Segment[] {
   return clipped
 }
 
+// The value a header draws after the name: its text and the input field it stands for (null when
+// it stands for none). `whole` says the text is that field in full, single line, as sent.
+type MainValue = { text: string; key: string | null; whole: boolean }
+
+// `marker Name  arg            status`, cut to `columns` less the margin. `shown` is the key of the
+// field the row drew whole, or null when it drew none that way.
+function headerRow(
+  call: CallView,
+  columns: number | undefined,
+  doneColor: string,
+  marker: string,
+  main: MainValue | null,
+): { segments: Segment[]; shown: string | null } {
+  const width = Math.max(validColumns(columns) - MARGIN, 1)
+  const status = statusOf(call)
+  const color = colorOf(status, doneColor)
+  const word = statusWord(status)
+  const segments: Segment[] = [
+    { text: `${marker} `, dim: true },
+    { text: formatToolName(call.tool), color, bold: isBold(status) },
+  ]
+  const wordRoom = word === '' ? 0 : GAP + length(word)
+  const argRoom = width - segmentsLength(segments) - GAP - wordRoom
+  let shown: string | null = null
+  if (main !== null && main.text !== '' && argRoom >= MIN_ARG) {
+    const text = truncate(main.text, argRoom)
+    segments.push({ text: ' '.repeat(GAP) + text, dim: true })
+    if (main.whole && text === main.text) shown = main.key
+  }
+  if (word !== '') {
+    const pad = Math.max(GAP, width - segmentsLength(segments) - length(word))
+    segments.push({ text: ' '.repeat(pad) + word, color })
+  }
+  const clipped = clipSegments(segments, width)
+  // A clip past the status word may have cut into the value too: then it was not drawn whole.
+  if (segmentsLength(clipped) < segmentsLength(segments)) shown = null
+
+  return { segments: clipped, shown }
+}
+
+// A non-empty `summary` (the model-written description) is drawn where the arg would be; it stands
+// for the `description` field (see describe in summarize.ts). It counts as that field whole only when
+// it is the raw description itself: cleaning (quotes, backticks, line breaks, end punctuation) did
+// not change it.
+function summaryValue(summary: string | undefined, input: unknown): MainValue | null {
+  if (summary === undefined || squash(summary) === '') return null
+  const text = squash(summary)
+  const raw = asRecord(input)?.['description']
+
+  return { text, key: 'description', whole: typeof raw === 'string' && raw.trim() === text }
+}
+
 // `[+] Name  arg            status`: the marker dim, the name bold in the status color, the arg dim
 // and cut to fit, the status word right-aligned and only when the call is not done. A non-empty
 // `summary` (the model-written description) is drawn where the arg would be.
@@ -171,51 +209,95 @@ export function collapsedSegments(
   doneColor: string = DEFAULT_DONE_COLOR,
   summary?: string,
 ): Segment[] {
-  const width = Math.max(validColumns(columns) - MARGIN, 1)
-  const status = statusOf(call)
-  const color = colorOf(status, doneColor)
-  const word = statusWord(status)
-  const segments: Segment[] = [
-    { text: `${MARKER_CLOSED} `, dim: true },
-    { text: formatToolName(call.tool), color, bold: isBold(status) },
-  ]
-  const wordRoom = word === '' ? 0 : GAP + length(word)
-  const argRoom = width - segmentsLength(segments) - GAP - wordRoom
-  const arg = summary !== undefined && squash(summary) !== '' ? squash(summary) : pickArg(call.input)
-  if (arg !== '' && argRoom >= MIN_ARG) segments.push({ text: ' '.repeat(GAP) + truncate(arg, argRoom), dim: true })
-  if (word !== '') {
-    const pad = Math.max(GAP, width - segmentsLength(segments) - length(word))
-    segments.push({ text: ' '.repeat(pad) + word, color })
-  }
-  return clipSegments(segments, width)
+  const field = pickArgField(call.input)
+  const main = summaryValue(summary, call.input) ?? (field === null ? null : { text: field.value, key: field.key, whole: false })
+
+  return headerRow(call, columns, doneColor, MARKER_CLOSED, main).segments
 }
 
-// `[-] Name  full input  key: value, ...`: the most telling field in full, then the other fields dim.
-// The text after the name is capped at about EXPANDED_LINES lines of the terminal width.
-export function expandedSegments(
+// Any line break: CRLF, a lone LF, or a lone CR (which a terminal would draw as a return to column 0).
+const LINE_BREAK = /\r\n|\r|\n/
+
+// The picked arg as an expanded header draws it: a multi-line value shows its first line only.
+// It counts as whole when that line is the full value, as sent, with no whitespace to collapse.
+function expandedArg(field: ArgField): MainValue {
+  const trimmed = field.raw.trim()
+  const lines = trimmed.split(LINE_BREAK)
+  const text = squash(lines[0] ?? '')
+
+  return { text, key: field.key, whole: lines.length === 1 && text === trimmed }
+}
+
+// Control characters a Text may not carry once lines are split: all but tab.
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g
+
+// A string value as drawn lines: its leading and trailing blank lines dropped, each line kept as sent
+// (indentation included, so code stays aligned) but for trailing whitespace and stray control characters.
+function stringLines(value: string): string[] {
+  const lines = value.split(LINE_BREAK).map(line => line.replace(CONTROL, '').trimEnd())
+  const first = lines.findIndex(line => line.trim() !== '')
+  if (first === -1) return []
+  const last = lines.length - 1 - [...lines].reverse().findIndex(line => line.trim() !== '')
+
+  return lines.slice(first, last + 1)
+}
+
+// unknown: the values of a tool input are whatever JSON the model sent.
+function fieldLines(value: unknown): string[] {
+  if (typeof value === 'string') return stringLines(value)
+  if (value === null) return ['null']
+  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)]
+  if (typeof value === 'object') return [JSON.stringify(value)]
+
+  return []
+}
+
+// The ARG_FIELDS first, in that order, then the rest of the input in its own order.
+function orderedKeys(record: Record<string, unknown>): string[] {
+  const keys = Object.keys(record)
+  const first: string[] = ARG_FIELDS.filter(key => keys.includes(key))
+
+  return [...first, ...keys.filter(key => !first.includes(key))]
+}
+
+// One row of segments per drawn line: `    key:   value`, the label in KEY_COLOR padded so the values
+// line up, the value dim; each further line of a multi-line value is indented to the value column.
+// `skip` is the field the header already drew whole.
+function fieldRows(input: unknown, skip: string | null): Segment[][] {
+  const record = asRecord(input)
+  if (record === null) return []
+  const fields = orderedKeys(record)
+    .filter(key => key !== skip)
+    .map(key => ({ label: `${key}:`, lines: fieldLines(record[key]) }))
+    .filter(field => field.lines.length > 0)
+  const labelWidth = Math.min(Math.max(0, ...fields.map(field => length(field.label))), MAX_KEY_WIDTH)
+  const indent = ' '.repeat(FIELD_INDENT)
+  const rows: Segment[][] = []
+  for (const { label, lines } of fields) {
+    const key = label + ' '.repeat(Math.max(labelWidth - length(label), 0) + 1)
+    const [first = '', ...rest] = lines
+    rows.push([{ text: indent }, { text: key, color: KEY_COLOR }, { text: first, dim: true }])
+    const continuation = ' '.repeat(FIELD_INDENT + length(key))
+    for (const line of rest) rows.push([{ text: continuation }, { text: line, dim: true }])
+  }
+
+  return rows
+}
+
+// The expanded row: `header` is the collapsed row with the `[-]` marker (a multi-line value shows its
+// first line), and `fields` one line per input field under it, uncut. The field the header drew whole
+// is left out of the list.
+export function expandedRows(
   call: CallView,
   columns: number | undefined,
   doneColor: string = DEFAULT_DONE_COLOR,
-): Segment[] {
-  const budget = validColumns(columns) * EXPANDED_LINES
-  const status = statusOf(call)
-  const color = colorOf(status, doneColor)
-  const word = statusWord(status)
-  const segments: Segment[] = [
-    { text: `${MARKER_OPEN} `, dim: true },
-    { text: formatToolName(call.tool), color, bold: isBold(status) },
-  ]
+  summary?: string,
+): { header: Segment[]; fields: Segment[][] } {
   const field = pickArgField(call.input)
-  const extras = extraFields(call.input, field?.key)
-  // With extras to follow, keep room for a gap and the closing `...` after the main field.
-  const mainRoom = budget - segmentsLength(segments) - GAP - (extras === '' ? 0 : GAP + 3)
-  if (field !== null && mainRoom > 0) segments.push({ text: ' '.repeat(GAP) + truncate(field.value, mainRoom) })
-  if (extras !== '') {
-    const room = budget - segmentsLength(segments) - GAP
-    segments.push({ text: ' '.repeat(GAP) + (room >= 8 ? truncate(extras, room) : '...'), dim: true })
-  }
-  if (word !== '') segments.push({ text: ' '.repeat(GAP) + word, color })
-  return segments
+  const main = summaryValue(summary, call.input) ?? (field === null ? null : expandedArg(field))
+  const { segments, shown } = headerRow(call, columns, doneColor, MARKER_OPEN, main)
+
+  return { header: segments, fields: fieldRows(call.input, shown) }
 }
 
 // For these tools the expanded view also draws the engine's own ToolUse row under the header.

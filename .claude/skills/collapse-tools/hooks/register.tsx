@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { DONE_COLOR_STORE_KEY, resolveDoneColor, validColor } from './accent'
-import { HINT_TEXT, collapsedSegments, expandedSegments, isExpanded, keepsEngineRow } from './summary'
+import { HINT_TEXT, collapsedSegments, expandedRows, isExpanded, keepsEngineRow } from './summary'
+import type { Segment } from './summary'
 import { SUMMARIES_STORE_KEY, describe, resolveSummaries } from './summarize'
 
 const collapsed = atom({ plugin: 'collapse-tools', key: 'collapsed' } as const, true as boolean)
@@ -172,31 +173,39 @@ export const register: Register = (on, options) => {
       await update($, member, cur => ({ epoch: ep, open: !isExpanded(g, openOf(cur, ep)) }))
     }
     const call = e.props
-    const summary = resolveSummaries(summariesFlag, options.summaries) ? describe(call.tool, call.input) : null
-    const segments = open
-      ? expandedSegments(call, e.viewport?.columns, doneColor)
-      : collapsedSegments(
-          call,
-          e.viewport?.columns,
-          doneColor,
-          summary ?? undefined,
-        )
-    const row = (
+    const summary = resolveSummaries(summariesFlag, options.summaries) ? (describe(call.tool, call.input) ?? undefined) : undefined
+    const columns = e.viewport?.columns
+    const runs = (segments: readonly Segment[]) =>
+      segments.map(segment => (
+        <Text color={segment.color} bold={segment.bold} dimColor={segment.dim}>
+          {segment.text}
+        </Text>
+      ))
+    const button = (segments: readonly Segment[]) => (
       <Button key={`collapse-tools:${id}`} plain onPress={toggle}>
-        {segments.map(segment => (
-          <Text color={segment.color} bold={segment.bold} dimColor={segment.dim}>
-            {segment.text}
-          </Text>
-        ))}
+        {runs(segments)}
       </Button>
     )
-    // Expanded: the header replaces the engine's row. Tools whose own row may carry more keep it below.
-    if (!open || !keepsEngineRow(call.tool)) return row
+    if (!open) return button(collapsedSegments(call, columns, doneColor, summary))
+
+    // Expanded: the header (a Button, so a click folds it back) replaces the engine's row, and the
+    // input fields follow one per line. Tools whose own row may carry more keep that row instead.
+    const { header, fields } = expandedRows(call, columns, doneColor, summary)
+    if (keepsEngineRow(call.tool)) {
+      return (
+        <Box flexDirection="column">
+          {button(header)}
+          {await next(e)}
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column">
-        {row}
-        {await next(e)}
+        {button(header)}
+        {fields.map(line => (
+          <Text>{runs(line)}</Text>
+        ))}
       </Box>
     )
   })

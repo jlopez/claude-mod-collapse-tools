@@ -1,11 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 import {
   DEFAULT_DONE_COLOR,
-  EXPANDED_LINES,
   MARGIN,
   STATUS_COLOR,
   collapsedSegments,
-  expandedSegments,
+  expandedRows,
   formatToolName,
   isExpanded,
   keepsEngineRow,
@@ -14,6 +13,7 @@ import {
   statusOf,
   truncate,
 } from './summary'
+import { describe } from './summarize'
 
 const call = { tool: 'Bash', input: { command: 'ls -la' }, isRunning: false, isErrored: false, isInterrupted: false }
 const nameOf = (segments: ReturnType<typeof collapsedSegments>) => segments[1]
@@ -56,7 +56,7 @@ test('the default done color is white and not bold; problems stay bold and color
 
 test('a chosen done color replaces the default in collapsed and expanded rows, not the problem colors', () => {
   expect(nameOf(collapsedSegments(call, 80, 'cyan'))?.color).toBe('cyan')
-  expect(nameOf(expandedSegments(call, 80, 'cyan'))?.color).toBe('cyan')
+  expect(nameOf(expandedRows(call, 80, 'cyan').header)?.color).toBe('cyan')
   expect(nameOf(collapsedSegments({ ...call, isErrored: true }, 80, 'cyan'))?.color).toBe('error')
 })
 
@@ -89,28 +89,124 @@ test('the collapsed row is one line: the arg is cut to fit and the width falls b
   expect(segmentsText(collapsedSegments(long, 6)).length).toBeLessThanOrEqual(2)
 })
 
-test('the expanded header shows the full input, then the other fields dim, capped at the limit', () => {
+const lines = (rows: ReturnType<typeof expandedRows>['fields']) => rows.map(segmentsText)
+
+test('the expanded header is the collapsed row with the [-] marker, status word included', () => {
+  const inputs = [{ command: 'ls -la' }, { command: 'x'.repeat(300), timeout: 5 }, { command: 'a  b' }]
+  for (const input of inputs) {
+    for (const flags of [{}, { isRunning: true }, { isErrored: true }]) {
+      const c = { ...call, ...flags, input }
+      expect(segmentsText(expandedRows(c, 80).header)).toBe(segmentsText(collapsedSegments(c, 80)).replace('[+]', '[-]'))
+      const summary = 'Run the full gate'
+      expect(segmentsText(expandedRows(c, 80, undefined, summary).header)).toBe(
+        segmentsText(collapsedSegments(c, 80, undefined, summary)).replace('[+]', '[-]'),
+      )
+    }
+  }
+})
+
+test('with a summary the description is left out and the command leads the field list', () => {
+  const input = { timeout: 120000, description: 'Run the full gate', command: 'npm run check' }
+  const open = expandedRows({ ...call, input }, 80, undefined, 'Run the full gate')
+  expect(segmentsText(open.header)).toBe('[-] Bash  Run the full gate')
+  expect(lines(open.fields)).toEqual(['    command: npm run check', '    timeout: 120000'])
+  expect(open.fields[0]).toEqual([
+    { text: '    ' },
+    { text: 'command: ', color: 'suggestion' },
+    { text: 'npm run check', dim: true },
+  ])
+})
+
+test('without a summary the picked arg is left out when drawn whole and kept when cut', () => {
+  const input = { command: 'npm run check', description: 'Run the full gate' }
+  const whole = expandedRows({ ...call, input }, 80)
+  expect(segmentsText(whole.header)).toBe('[-] Bash  npm run check')
+  expect(lines(whole.fields)).toEqual(['    description: Run the full gate'])
+
   const cmd = 'y'.repeat(150)
-  const open = expandedSegments({ ...call, input: { command: cmd, timeout: 5000 } }, 80)
-  expect(segmentsText(open)).toBe(`[-] Bash  ${cmd}  timeout: 5000`)
-  expect(open[open.length - 1]).toMatchObject({ dim: true })
+  const cut = expandedRows({ ...call, input: { command: cmd, timeout: 5000 } }, 80)
+  expect(segmentsText(cut.header).endsWith('...')).toBe(true)
+  expect(lines(cut.fields)).toEqual([`    command: ${cmd}`, '    timeout: 5000'])
 
-  const huge = expandedSegments({ ...call, input: { command: 'z'.repeat(5000), description: 'd'.repeat(500) } }, 80)
-  expect(segmentsText(huge).length).toBeLessThanOrEqual(80 * EXPANDED_LINES)
-  expect(segmentsText(huge).endsWith('...')).toBe(true)
+  // A cut summary keeps the description; whitespace the header collapsed keeps the field too.
+  const longSummary = 'd'.repeat(200)
+  const kept = expandedRows({ ...call, input: { command: 'ls', description: longSummary } }, 80, undefined, longSummary)
+  expect(lines(kept.fields)).toEqual(['    command:     ls', `    description: ${longSummary}`])
+  const spaced = expandedRows({ ...call, input: { command: 'a  b' } }, 80)
+  expect(lines(spaced.fields)).toEqual(['    command: a  b'])
 })
 
-test('the expanded header skips array and object fields and shows scalar extras', () => {
-  const input = { title: 'plan', op: 'set', nodes: [{ title: 'a' }], meta: { k: 1 } }
-  const text = segmentsText(expandedSegments({ ...call, input }, 80))
-  expect(text).toBe('[-] Bash  plan  op: set')
-  expect(text).not.toContain('nodes')
-  expect(text).not.toContain('meta')
+test('a multi-line command shows its first line in the header and every line in the list', () => {
+  const command = 'cat <<EOF > out.txt\n  indented  line\nlast   \nEOF\n'
+  const open = expandedRows({ ...call, input: { command, timeout: 5 } }, 80)
+  expect(segmentsText(open.header)).toBe('[-] Bash  cat <<EOF > out.txt')
+  expect(lines(open.fields)).toEqual([
+    '    command: cat <<EOF > out.txt',
+    '               indented  line',
+    '             last',
+    '             EOF',
+    '    timeout: 5',
+  ])
+  expect(open.fields[1]).toEqual([{ text: ' '.repeat(13) }, { text: '  indented  line', dim: true }])
 })
 
-test('a long string extra is single-line and cut at 40 code points', () => {
-  const text = segmentsText(expandedSegments({ ...call, input: { command: 'ls', note: `a\n${'b'.repeat(100)}` } }, 80))
-  expect(text).toBe(`[-] Bash  ls  note: a ${'b'.repeat(35)}...`)
+test('a multi-line value keeps the indentation of its first line, so code stays aligned', () => {
+  const input = { file_path: 'a.ts', old_string: '\n    if (x) {\n      y()\n    }\n\n' }
+  const open = expandedRows({ ...call, tool: 'Edit', input }, 80)
+  expect(segmentsText(open.header)).toBe('[-] Edit  a.ts')
+  expect(lines(open.fields)).toEqual([
+    '    old_string:     if (x) {',
+    `${' '.repeat(16)}      y()`,
+    `${' '.repeat(16)}    }`,
+  ])
+  expect(open.fields[0]?.[2]).toEqual({ text: '    if (x) {', dim: true })
+})
+
+test('a lone carriage return breaks the line and other control characters but tab are dropped', () => {
+  const input = { command: "printf 'a\rb'", description: 'x\u001by\tz', blank: '\u0001 ' }
+  const open = expandedRows({ ...call, input }, 80)
+  expect(segmentsText(open.header)).toBe("[-] Bash  printf 'a")
+  expect(lines(open.fields)).toEqual(["    command:     printf 'a", `${' '.repeat(17)}b'`, '    description: xy\tz'])
+  expect(lines(open.fields).some(line => /[\r\u0000-\u0008\u000b-\u001f]/.test(line))).toBe(false)
+})
+
+test('a summary the cleaning changed does not stand for the description, which stays in the list', () => {
+  const input = { command: 'npm test', description: 'Run `npm test`\nthen lint.' }
+  const open = expandedRows({ ...call, input }, 80, undefined, describe('Bash', input) ?? undefined)
+  expect(segmentsText(open.header)).toBe('[-] Bash  Run npm test then lint')
+  expect(lines(open.fields)).toEqual([
+    '    command:     npm test',
+    '    description: Run `npm test`',
+    `${' '.repeat(17)}then lint.`,
+  ])
+})
+
+test('labels pad to the widest key, capped at 16 columns; a longer key gets one space', () => {
+  const input = { command: 'z'.repeat(200), a: 1, a_very_long_key_name: 'v' }
+  expect(lines(expandedRows({ ...call, input }, 80).fields)).toEqual([
+    `    command:         ${'z'.repeat(200)}`,
+    '    a:               1',
+    '    a_very_long_key_name: v',
+  ])
+})
+
+test('the list orders the arg fields first, shows JSON, null and scalars, and skips empty strings', () => {
+  const input = { nodes: [{ title: 'a' }], meta: { k: 1 }, gone: null, blank: '  ', flag: true, op: 'set', title: 'plan' }
+  const open = expandedRows({ ...call, input }, 80)
+  expect(segmentsText(open.header)).toBe('[-] Bash  plan')
+  expect(lines(open.fields)).toEqual([
+    '    op:    set',
+    '    nodes: [{"title":"a"}]',
+    '    meta:  {"k":1}',
+    '    gone:  null',
+    '    flag:  true',
+  ])
+})
+
+test('no field list line is cut, however long', () => {
+  const note = 'n'.repeat(5000)
+  const open = expandedRows({ ...call, input: { command: 'ls', note } }, 80)
+  expect(lines(open.fields)).toEqual([`    note: ${note}`])
 })
 
 test('only the tools whose engine row may carry more keep it', () => {

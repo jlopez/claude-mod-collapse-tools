@@ -27,10 +27,12 @@ Collapsed rows (**inferred** from `collapsedSegments` and the segment tests; the
 Expanded row, after a click (**inferred**, asserted in tests):
 
 ```
-[-] Bash  npm run check  timeout: 120000, description: Run the full gate
+[-] Bash  Run the full gate
+    command: npm run check
+    timeout: 120000
 ```
 
-The most telling field in full, then the other scalar fields dim as `key: value`, the whole capped at about six lines of text. Below it the engine's normal `ToolResult` block is drawn. For `Agent`, `Task`, `AskUserQuestion`, `TodoWrite`, `ExitPlanMode` the engine's own `ToolUse` row is also drawn under the header, because those rows carry more than `Name(arg)` (a judgment from the types, not a live check, per the README).
+The header is the collapsed row with `[-]` for `[+]` (same text, width budget and status word), except that a multi-line picked argument shows its first line only; so a click grows the row downward without changing its first line. Under it, one line per input field, indented 4: the `key:` label in the `suggestion` theme key, padded to the widest label (capped at 16 columns), then the value dim. `ARG_FIELDS` come first, then the input's own order. The field the header drew whole is left out (here `description`, drawn as the summary, which counts as whole only when cleaning left the raw description unchanged); a cut, multi-line or cleaned one stays. Strings keep their line breaks and every line's indentation, the first line's included (continuation lines are indented to the value column; leading and trailing blank lines, trailing spaces and control characters other than tab are dropped, and a lone CR breaks the line), objects and arrays are compact JSON, empty strings are skipped, and nothing is cut: a long line wraps at the terminal edge. Below the list the engine's normal `ToolResult` block is drawn. For `Agent`, `Task`, `AskUserQuestion`, `TodoWrite`, `ExitPlanMode` the field list is replaced by the engine's own `ToolUse` row, because those rows carry more than `Name(arg)` (a judgment from the types, not a live check, per the README).
 
 Controls:
 
@@ -112,11 +114,11 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 | `.claude-plugin/plugin.json` | 34 | manifest, version `0.4.0`, two `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`), `types` pointer |
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
-| `hooks/register.tsx` | 216 | all `$` access: atoms, store I/O, the five hooks, JSX |
-| `hooks/summary.ts` | 227 | pure: arg picking, status, segment building for both row shapes, truncation, the keep-engine-row set, `isExpanded` |
+| `hooks/register.tsx` | 225 | all `$` access: atoms, store I/O, the five hooks, JSX |
+| `hooks/summary.ts` | 309 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, truncation, the keep-engine-row set, `isExpanded` |
 | `hooks/summarize.ts` | 46 | pure: the described-tools allowlist, `cleanSummary`, `describe`, `resolveSummaries` |
 | `hooks/accent.ts` | 21 | pure: color validation (`#rrggbb`, named, `...Bright`, `claude`), `resolveDoneColor` |
-| `hooks/*.test.ts` | 405 | 34 tests under `claude plugin test` |
+| `hooks/*.test.ts` | 502 | 40 tests under `claude plugin test` |
 | `types/index.d.ts` | 12 | the state contract |
 | `README.md` (plugin folder) | | what the plugin directory review asks for: a per-hook description |
 
@@ -160,18 +162,19 @@ ui.render { component: 'ToolUse', requestId: tool_use_id, props: { tool, input, 
   ├─ read collapsed, epoch, overrides[id], doneColorOverride, summariesOn   (5 subscriptions)
   ├─ open = overrides[id].epoch === epoch ? overrides[id].open : !collapsed
   ├─ summary = resolveSummaries(summariesOn, options.summaries) ? describe(tool, input) : null
-  ├─ segments = open ? expandedSegments(...) : collapsedSegments(..., summary)
-  ├─ row = <Button key=`collapse-tools:${id}` plain onPress={toggle}> {segments → <Text/>} </Button>
+  ├─ button(segments) = <Button key=`collapse-tools:${id}` plain onPress={toggle}> {segments → <Text/>} </Button>
   │
-  ├─ if !open || !keepsEngineRow(tool):  return row            (engine row replaced, next() never called)
-  └─ else:                                return <Box column> {row} {await next(e)} </Box>
+  ├─ if !open:               return button(collapsedSegments(..., summary))       (engine row replaced, next() never called)
+  ├─ { header, fields } = expandedRows(..., summary)
+  ├─ if keepsEngineRow(tool): return <Box column> {button(header)} {await next(e)} </Box>
+  └─ else:                    return <Box column> {button(header)} {fields → <Text>{segments → <Text/>}</Text>} </Box>
 ```
 
 The epoch trick: `/collapse-tools` does not clear the `overrides` family. It increments `epoch`, and `openOf` treats a member written under an older epoch as absent. Upstream commit `c513b46` introduced this: the first version kept one `Record<string, boolean>` atom, so any click redrew every row and a global toggle had to rewrite the map. A family member per `tool_use_id` plus an epoch makes a click redraw one row and a global toggle O(1) in writes (the readers of `epoch` and `collapsed`, all rows, redraw anyway).
 
 `toggle` re-reads `collapsed` and `epoch` at press time, not from the draw-time closure, then writes `{ epoch, open: !isExpanded(g, openOf(cur, ep)) }` to the member. This is the documented pattern: never write from a value captured at draw time.
 
-When the engine row is replaced (`!open`, or an expanded tool outside the keep set), `next(e)` is never called, so no plugin beneath this one and none of the engine's own `ToolUse` drawing runs for that row.
+The field lines sit outside the Button, as siblings in the column Box, because a Button's children must be strings or Text; only the header is clickable. When the engine row is replaced (`!open`, or an expanded tool outside the keep set), `next(e)` is never called, so no plugin beneath this one and none of the engine's own `ToolUse` drawing runs for that row.
 
 ### Draw a result block
 
@@ -206,8 +209,8 @@ The returned `{ text }` is drawn as the command's output row and read by the mod
 
 ### The pure functions
 
-- `collapsedSegments(call, columns, doneColor, summary?)`: builds `[+] `, the name, then budgets `width - name - GAP - wordRoom` for the argument. The argument is drawn only if at least 4 columns remain. The status word is padded to the right edge. A final `clipSegments` guarantees the total fits.
-- `expandedSegments(call, columns, doneColor)`: budget `columns × 6` characters. Main field in full (whitespace collapsed), then `extraFields` as `key: value` for string, number and boolean fields only (objects and arrays skipped, commit `bb02ed3`), each string value cut at 40, the list cut to fit.
+- `collapsedSegments(call, columns, doneColor, summary?)`: a thin wrapper over the private `headerRow` with the `[+]` marker. `headerRow` builds the marker, the name, then budgets `width - name - GAP - wordRoom` for the argument. The argument is drawn only if at least 4 columns remain. The status word is padded to the right edge. A final `clipSegments` guarantees the total fits. It also reports which field it drew whole (the summary stands for `description`, whole only when it equals the trimmed raw `input.description`).
+- `expandedRows(call, columns, doneColor, summary?)`: returns `{ header, fields }`. `header` is `headerRow` with `[-]`; without a summary the picked arg goes through `expandedArg`, which keeps the first line of a multi-line value and counts it whole only when that line equals the trimmed raw value. `fields` (from `fieldRows`) is one `Segment[]` per drawn line: `{ text: '    ' }`, `{ text: 'key:' + pad, color: 'suggestion' }`, `{ text: value, dim: true }`, and `[{ indent }, { line, dim }]` for each continuation line. Order is `ARG_FIELDS` then insertion order; the field `headerRow` drew whole is skipped; values are uncut. String values go through `stringLines`: split on CRLF, LF or a lone CR, control characters but tab dropped, each line `trimEnd`ed, leading and trailing blank lines dropped, leading indentation kept.
 - `statusOf`: interrupted > error > running > done.
 - `describe(tool, input)`: null unless the tool is in `DESCRIBED_TOOLS` and `input.description` is a string that survives `cleanSummary` (control chars to spaces, format chars dropped, double quotes and backticks dropped, whitespace collapsed, leading and trailing quotes and punctuation stripped; the result is not cut, the row builder truncates it to the room left before the right-aligned status word).
 - `truncate` works on code points (`Array.from`), so a surrogate pair is never split; it does not account for East Asian wide characters or grapheme clusters, so a row of CJK or emoji can still overflow by display width (**inferred**).
@@ -301,7 +304,7 @@ Places a change plugs in, and rough edges seen while tracing.
 
 ### Plug-in points
 
-- **Row text.** `collapsedSegments` and `expandedSegments` in `summary.ts` are pure and return `Segment[]`; any change to what a row says is a change there plus a test in `summary.test.ts`. `ARG_FIELDS` order and `MIN_ARG`, `MARGIN`, `EXPANDED_LINES`, `MAX_EXTRA_VALUE` are the knobs.
+- **Row text.** `collapsedSegments` and `expandedRows` in `summary.ts` are pure and return `Segment[]` (one per line for the field list); any change to what a row says is a change there plus a test in `summary.test.ts`. `ARG_FIELDS` order and `MIN_ARG`, `MARGIN`, `FIELD_INDENT`, `MAX_KEY_WIDTH`, `KEY_COLOR` are the knobs.
 - **Which tools get a summary.** `DESCRIBED_TOOLS` in `summarize.ts`. Note that for `Agent` the summary path changes little: `description` is already in `ARG_FIELDS` and `Agent` input has no `command`/`file_path`, so with summaries off the same text shows, uncleaned. The summary setting really only affects `Bash` (whose `command` wins otherwise) and `Monitor`.
 - **Which tools keep the engine row when expanded.** `KEEP_ENGINE_ROW` in `summary.ts`.
 - **ctrl+o and `--verbose`.** `ToolUse` and `ToolResult` props carry `isExpanded?: boolean` as of 2.1.309 (absent in the vendored 2.1.295 types). The documented pattern is: a hook that draws a compact row returns `next(e)` when `isExpanded` is true. One guard at the top of each render hook removes the "ctrl+o does not unfold these rows" limitation. It needs the vendored types regenerated, and a decision about whether to keep the fold inside the ctrl+o view too.

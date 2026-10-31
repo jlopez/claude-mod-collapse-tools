@@ -8,7 +8,7 @@
   <a href="#installation">Install</a> · <a href="#usage">Usage</a> · <a href="#how-it-works">How it works</a>
 </div>
 
-Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. Click a row to expand it into a single `[-]` header followed by the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are still `collapse-tools`. A toast at session start (once) tells you how. The tool name of a finished call is white by default, and you can change that color.
+Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are still `collapse-tools`. A toast at session start (once) tells you how. The tool name of a finished call is white by default, and you can change that color.
 
 ## What it looks like
 
@@ -28,19 +28,21 @@ With row summaries on (the default), a call whose input carries a `description` 
 [+] Read  /src/auth.ts
 ```
 
-One expanded row (the header replaces the engine's row; the result is drawn as usual below it):
+The same row expanded (the header keeps the collapsed text, the input fields follow one per line, and the result is drawn as usual below them):
 
 ```
-[-] Bash  npm run check  timeout: 120000, description: Run the full gate
+[-] Bash  Run the full gate
+    command: npm run check
+    timeout: 120000
 ```
 
 ## Features
 
 - One-line rows. Each call reads `[+] Name  arg`. The name of a done call is white (not bold) by default and you can change it; a running call is yellow, an error red and an interrupted call gray, all three bold. A status word (`running`, `error`, `interrupted`) is right-aligned at the end of the row, in the same color; a done call shows none.
-- Row summaries. A collapsed row shows the description the model wrote for the call (Bash, Agent and Monitor inputs carry one) in place of the raw argument. The plugin makes no model or network calls: the text is read from the call's own input. On by default; `/collapse-tools summary on|off` or the `summaries` option. The expanded header always keeps the raw input.
+- Row summaries. A collapsed row shows the description the model wrote for the call (Bash, Agent and Monitor inputs carry one) in place of the raw argument. The plugin makes no model or network calls: the text is read from the call's own input. On by default; `/collapse-tools summary on|off` or the `summaries` option. The expanded row keeps the summary as its header and lists the raw input below it.
 - Readable names. An MCP tool `mcp__server__tool` shows as `server:tool`.
 - Click hint. `[+]` marks a row you can click. Once per session, on start, a toast says "click a [+] row to expand, /collapse-tools to toggle all".
-- Click to expand. Clicking a row expands that call into a single `[-]` header with the full input; clicking the header collapses it again.
+- Click to expand. Clicking a row grows it downward: the header keeps its text with a `[-]` marker, and every input field follows on its own line, uncut. Clicking the header collapses it again.
 - `/collapse-tools` command. Switches the default for all calls and clears per-call toggles. The choice is saved across sessions.
 - Pickable completed-call color (the color of a call that completed successfully; running is yellow, error red, interrupted gray). `/collapse-tools color <name|#hex|reset>` or the `doneColor` option.
 - Collapsed results. The result block of a collapsed call is not drawn.
@@ -89,15 +91,17 @@ Tool calls are collapsed by default. These controls change that:
 
 Completed-call color (marks a call that completed successfully; running is yellow, error red, interrupted gray): `<name>` is black, red, green, yellow, blue, magenta, cyan, white, gray (or grey), `claude`, or a `...Bright` variant of the basic names; `#rrggbb` also works. The color in effect is the one saved by `/collapse-tools color`, else the `doneColor` plugin option (Completed call color; default `white`), else `white`. An invalid option value falls back to the default.
 
-Row summaries: the setting in effect is the one saved by `/collapse-tools summary on|off`, else the `summaries` plugin option (Row summaries; default on), else on. When on, a collapsed row for `Bash`, `Agent` or `Monitor` shows `[+] Name  <description>` in place of the argument, where `<description>` is the call's own `description` input, cleaned of quotes, control characters and trailing punctuation and cut to the width left on the row (the status word stays right-aligned). These are the built-in tools whose `description` field is documented as a short statement of what the call is for; MCP tools and other tools are excluded because their `description` means something else. A call with no description, or an empty one, shows the raw argument. Summaries show only on collapsed rows (`/collapse-tools` toggles all); an expanded row shows the raw input. With summaries off, rows show the raw argument.
+Row summaries: the setting in effect is the one saved by `/collapse-tools summary on|off`, else the `summaries` plugin option (Row summaries; default on), else on. When on, a collapsed row for `Bash`, `Agent` or `Monitor` shows `[+] Name  <description>` in place of the argument, where `<description>` is the call's own `description` input, cleaned of quotes, control characters and trailing punctuation and cut to the width left on the row (the status word stays right-aligned). These are the built-in tools whose `description` field is documented as a short statement of what the call is for; MCP tools and other tools are excluded because their `description` means something else. A call with no description, or an empty one, shows the raw argument. An expanded row keeps the summary as its header and lists the raw `command` (and the other fields) below it. With summaries off, rows show the raw argument.
 
 A per-call toggle beats the default until the next `/collapse-tools`. The status is `interrupted` if the call was aborted, otherwise `error` if it failed, otherwise `running` while it runs, otherwise `done`.
 
 The collapsed argument is the first non-empty string among the call's `command`, `file_path`, `path`, `pattern`, `description`, `title` and `op` fields. If none is present, the first string field of the input is used. Whitespace is collapsed and the argument is cut with `...` so the row fits the terminal width less 4 columns (100 columns when the width is unknown).
 
-The expanded header shows that same field in full (whitespace collapsed), then the input's other fields as a dim `key: value, key: value` list. The header after the tool name is capped at 6 times the terminal width in characters (about 6 lines) and ends with `...` where it is cut. A non-done status word follows the header.
+The expanded header is the collapsed row with `[-]` in place of `[+]`: same text, same width, same right-aligned status word. One exception: when the picked argument spans several lines, the header shows only its first line.
 
-Tools that keep the engine's row: for `Agent`, `Task`, `AskUserQuestion`, `TodoWrite` and `ExitPlanMode` the expanded view is the header followed by the engine's own row, because that row may carry more than `Name(arg)`. Every other tool, including `Edit` and `Write` (their diff is part of the tool's output, which the result block draws), shows the header alone.
+Below the header, each input field gets its own line, indented 4 columns: the `key:` label in the theme's `suggestion` color, padded so the values line up (to the widest label, at most 16 columns; a longer label is followed by one space), then the value dim. The fields `command`, `file_path`, `path`, `pattern`, `description`, `title` and `op` come first, in that order, then the rest in the input's own order. The field the header shows is left out, but only when the header shows it whole (single line, not cut, no whitespace collapsed); with summaries on, a `Bash` row's header is its description, so the list starts with `command`. A summary counts as the description drawn whole only when cleaning did not change it; a description with a line break, quotes, backticks or trailing punctuation stays in the list with its raw text. Empty strings are skipped; numbers and booleans are shown as text, objects and arrays as compact JSON, `null` as `null`. A multi-line value keeps its line breaks (CRLF, LF or a lone CR) and the indentation of every line, its first included, each further line indented to the value column; leading and trailing blank lines, trailing spaces and control characters other than tab are dropped. Nothing in the list is cut: a long line wraps at the terminal edge.
+
+Tools that keep the engine's row: for `Agent`, `Task`, `AskUserQuestion`, `TodoWrite` and `ExitPlanMode` the expanded view is the header followed by the engine's own row, because that row may carry more than `Name(arg)`. These show no field list. Every other tool, including `Edit` and `Write` (their diff is part of the tool's output, which the result block draws), shows the header and the field list.
 
 ## How it works
 
@@ -108,7 +112,7 @@ The plugin registers five hooks in `.claude/skills/collapse-tools/hooks/register
 | `session.start` | Loads the saved default, done color and summaries setting from the plugin store, registers the `/collapse-tools` command and, once per session, shows the click-hint toast. |
 | `turn.start` | Reloads the saved default and, when unset, the done color and the summaries setting. `/clear` resets the atoms and no `session.start` follows, so this restores the choice on the next turn. |
 | `command.run` (`collapse-tools`) | With `color ...`, sets or resets the done color; with `summary on\|off`, sets the summaries setting. Otherwise flips the default, increments the epoch (which invalidates per-call toggles), saves the default to the store and returns the reply text. |
-| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by the engine's own row for the tools listed above. |
+| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (or by the engine's own row for the tools listed above). |
 | `ui.render` (`ToolResult`) | Draws the engine's result when the call is expanded. Otherwise returns a `Box` with `display="none"`. |
 
 State atoms (declared in `types/index.d.ts` under `collapse-tools`):
@@ -159,10 +163,10 @@ npm run check
 - Not verified in a live session: how the rows look, whether a click lands on the row on every surface, and whether the theme keys used for status colors (`success`, `error`, `warning`, `inactive`) read as green, red, yellow and gray in every theme.
 - A collapsed result is a Box with `display="none"`, the only draw-nothing option the API documents (a hook must return an element; it cannot return null). A margin the engine puts around each transcript message cannot be changed from a plugin, so some spacing between consecutive collapsed rows may remain.
 - Which tools keep the engine's row is a judgment from the API types, not from a live check. A tool not listed whose engine row carries extra detail loses that detail when expanded.
-- Expanded input is shown on one line per field set (whitespace collapsed), so multi-line commands lose their line breaks.
+- A very large input (a long file written with `Write`, a big JSON field) is drawn in full when expanded, so it can take many screen rows.
 - Only tools whose input carries a `description` get a summary: `Bash`, `Agent` and `Monitor`. Every other row shows the raw argument.
 - A summary is the model's own words about the call, not a check of it, so it can differ from what the call does. Open the row (`[-]`) to see the real input.
-- Summaries show on collapsed rows only; the expanded header always shows the raw input.
+- With summaries on, the expanded header still shows the summary; the raw input is in the field list below it.
 - Colors and the toast need a surface that draws them; only the terminal surface is assumed.
 
 ## License
