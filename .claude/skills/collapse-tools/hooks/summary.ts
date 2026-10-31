@@ -1,3 +1,5 @@
+import { formatShell, isShellTool } from './shell'
+
 export const DEFAULT_COLUMNS = 100
 // Columns kept free at the right of a collapsed row (the engine's gutter and a cursor cell).
 export const MARGIN = 4
@@ -242,8 +244,18 @@ function stringLines(value: string): string[] {
   return lines.slice(first, last + 1)
 }
 
+// A shell tool's `command` with no line break, laid out one clause per line; null when it stays as sent.
+function shellLines(tool: string, key: string, value: unknown): string[] | null {
+  if (key !== 'command' || !isShellTool(tool) || typeof value !== 'string' || LINE_BREAK.test(value)) return null
+  const lines = formatShell(value)
+
+  return lines.length > 1 ? lines : null
+}
+
 // unknown: the values of a tool input are whatever JSON the model sent.
-function fieldLines(value: unknown): string[] {
+function fieldLines(tool: string, key: string, value: unknown): string[] {
+  const shell = shellLines(tool, key, value)
+  if (shell !== null) return shell
   if (typeof value === 'string') return stringLines(value)
   if (value === null) return ['null']
   if (typeof value === 'number' || typeof value === 'boolean') return [String(value)]
@@ -262,13 +274,14 @@ function orderedKeys(record: Record<string, unknown>): string[] {
 
 // One row of segments per drawn line: `    key:   value`, the label in KEY_COLOR padded so the values
 // line up, the value dim; each further line of a multi-line value is indented to the value column.
+// A shell tool's one-line `command` is laid out one clause per line (see shell.ts).
 // `skip` is the field the header already drew whole.
-function fieldRows(input: unknown, skip: string | null): Segment[][] {
+function fieldRows(tool: string, input: unknown, skip: string | null): Segment[][] {
   const record = asRecord(input)
   if (record === null) return []
   const fields = orderedKeys(record)
     .filter(key => key !== skip)
-    .map(key => ({ label: `${key}:`, lines: fieldLines(record[key]) }))
+    .map(key => ({ label: `${key}:`, lines: fieldLines(tool, key, record[key]) }))
     .filter(field => field.lines.length > 0)
   const labelWidth = Math.min(Math.max(0, ...fields.map(field => length(field.label))), MAX_KEY_WIDTH)
   const indent = ' '.repeat(FIELD_INDENT)
@@ -297,7 +310,7 @@ export function expandedRows(
   const main = summaryValue(summary, call.input) ?? (field === null ? null : expandedArg(field))
   const { segments, shown } = headerRow(call, columns, doneColor, MARKER_OPEN, main)
 
-  return { header: segments, fields: fieldRows(call.input, shown) }
+  return { header: segments, fields: fieldRows(call.tool, call.input, shown) }
 }
 
 // For these tools the expanded view also draws the engine's own ToolUse row under the header.

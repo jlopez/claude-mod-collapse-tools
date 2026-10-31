@@ -115,14 +115,15 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
 | `hooks/register.tsx` | 225 | all `$` access: atoms, store I/O, the five hooks, JSX |
-| `hooks/summary.ts` | 309 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, truncation, the keep-engine-row set, `isExpanded` |
+| `hooks/summary.ts` | 322 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, truncation, the keep-engine-row set, `isExpanded` |
+| `hooks/shell.ts` | 91 | pure: `SHELL_TOOLS`, `isShellTool`, `formatShell` (one clause per line at top-level `&&`, `||`, `|`, `|&`, `;`) |
 | `hooks/summarize.ts` | 46 | pure: the described-tools allowlist, `cleanSummary`, `describe`, `resolveSummaries` |
 | `hooks/accent.ts` | 21 | pure: color validation (`#rrggbb`, named, `...Bright`, `claude`), `resolveDoneColor` |
-| `hooks/*.test.ts` | 502 | 40 tests under `claude plugin test` |
+| `hooks/*.test.ts` | 641 | 56 tests under `claude plugin test` |
 | `types/index.d.ts` | 12 | the state contract |
 | `README.md` (plugin folder) | | what the plugin directory review asks for: a per-hook description |
 
-The split is deliberate: `register.tsx` is the only file that touches `$`, the three pure modules take data and return data, so they are unit-tested without an engine and `register.tsx` is tested through `$.ui.mount`.
+The split is deliberate: `register.tsx` is the only file that touches `$`, the pure modules take data and return data, so they are unit-tested without an engine and `register.tsx` is tested through `$.ui.mount`.
 
 ### State contract
 
@@ -173,6 +174,8 @@ ui.render { component: 'ToolUse', requestId: tool_use_id, props: { tool, input, 
 The epoch trick: `/collapse-tools` does not clear the `overrides` family. It increments `epoch`, and `openOf` treats a member written under an older epoch as absent. Upstream commit `c513b46` introduced this: the first version kept one `Record<string, boolean>` atom, so any click redrew every row and a global toggle had to rewrite the map. A family member per `tool_use_id` plus an epoch makes a click redraw one row and a global toggle O(1) in writes (the readers of `epoch` and `collapsed`, all rows, redraw anyway).
 
 `toggle` re-reads `collapsed` and `epoch` at press time, not from the draw-time closure, then writes `{ epoch, open: !isExpanded(g, openOf(cur, ep)) }` to the member. This is the documented pattern: never write from a value captured at draw time.
+
+Inside `expandedRows`, `fieldRows` receives the tool: for a shell tool (`isShellTool`: `Bash`, `Monitor`) whose `command` is a string with no line break, `formatShell` splits it at top-level `&&`, `||`, `|`, `|&` and `;` and the operator leads each continuation line; if it yields one line, or the command has a line break, or the lexer ends inside a quote or bracket, the plain `stringLines` path runs. This is display-only and conservative (**inferred** from `shell.test.ts` and `summary.test.ts`; not checked in a live session). The collapsed row and the header are unchanged, including the "drawn whole" skip rule.
 
 The field lines sit outside the Button, as siblings in the column Box, because a Button's children must be strings or Text; only the header is clickable. When the engine row is replaced (`!open`, or an expanded tool outside the keep set), `next(e)` is never called, so no plugin beneath this one and none of the engine's own `ToolUse` drawing runs for that row.
 
@@ -305,6 +308,7 @@ Places a change plugs in, and rough edges seen while tracing.
 ### Plug-in points
 
 - **Row text.** `collapsedSegments` and `expandedRows` in `summary.ts` are pure and return `Segment[]` (one per line for the field list); any change to what a row says is a change there plus a test in `summary.test.ts`. `ARG_FIELDS` order and `MIN_ARG`, `MARGIN`, `FIELD_INDENT`, `MAX_KEY_WIDTH`, `KEY_COLOR` are the knobs.
+- **Shell command layout.** `formatShell` and `SHELL_TOOLS` in `shell.ts`: add a tool whose `command` is a shell command to `SHELL_TOOLS`; the separators and the bracket/quote handling are in the one lexer loop, tested in `shell.test.ts`. The wiring is `shellLines` in `summary.ts`; dropping the no-line-break rule is a one-line change there.
 - **Which tools get a summary.** `DESCRIBED_TOOLS` in `summarize.ts`. Note that for `Agent` the summary path changes little: `description` is already in `ARG_FIELDS` and `Agent` input has no `command`/`file_path`, so with summaries off the same text shows, uncleaned. The summary setting really only affects `Bash` (whose `command` wins otherwise) and `Monitor`.
 - **Which tools keep the engine row when expanded.** `KEEP_ENGINE_ROW` in `summary.ts`.
 - **ctrl+o and `--verbose`.** `ToolUse` and `ToolResult` props carry `isExpanded?: boolean` as of 2.1.309 (absent in the vendored 2.1.295 types). The documented pattern is: a hook that draws a compact row returns `next(e)` when `isExpanded` is true. One guard at the top of each render hook removes the "ctrl+o does not unfold these rows" limitation. It needs the vendored types regenerated, and a decision about whether to keep the fold inside the ctrl+o view too.

@@ -220,3 +220,12 @@ test('a per-call override beats the global default', () => {
   expect(isExpanded(false, undefined)).toBe(true)
   expect(isExpanded(false, false)).toBe(false)
 })
+
+test('a Bash or Monitor command with no line break is laid out one clause per line; other tools and multi-line commands are not', () => {
+  const texts = (tool: string, command: string) =>
+    expandedRows({ ...call, tool, input: { command } }, 80, undefined, 'Do it').fields.map(row => segmentsText(row))
+  expect(texts('Bash', 'a && b')).toEqual(['    command: a', '             && b'])
+  expect(texts('Monitor', 'a && b')).toEqual(['    command: a', '             && b'])
+  expect(texts('mcp__x__y', 'a && b')).toEqual(['    command: a && b'])
+  expect(texts('Bash', 'a && b\nc')).toEqual(['    command: a && b', '             c'])
+})

@@ -44,7 +44,7 @@ The plugin registers five hooks in `hooks/register.tsx`. The pure logic (argumen
 | `session.start` | Loads the saved default, done color and summaries setting from the plugin store, registers the `/collapse-tools` command and, once per session, shows the click-hint toast. |
 | `turn.start` | Reloads the saved default and, when unset, the done color and the summaries setting. `/clear` resets the atoms and no `session.start` follows, so this restores the choice on the next turn. |
 | `command.run` (`collapse-tools`) | With `color ...`, sets or resets the done color; with `summary on\|off`, sets the summaries setting. Otherwise flips the default, increments the epoch (which invalidates per-call toggles), saves the default to the store and returns the reply text. |
-| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field, or by the engine's own row for Agent, Task, AskUserQuestion, TodoWrite and ExitPlanMode. |
+| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (a one-line `Bash` or `Monitor` command is laid out one clause per line), or by the engine's own row for Agent, Task, AskUserQuestion, TodoWrite and ExitPlanMode. |
 | `ui.render` (`ToolResult`) | Draws the engine's result when the call is expanded. Otherwise returns a `Box` with `display="none"`. |
 
 ## Data and privacy
