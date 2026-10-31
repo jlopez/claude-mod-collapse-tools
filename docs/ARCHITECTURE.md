@@ -114,7 +114,7 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 
 | File | Lines | Role |
 |---|---|---|
-| `.claude-plugin/plugin.json` | 41 | manifest, version `0.4.0`, three `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`, `syntaxPalette` choice default `weight`), `types` pointer |
+| `.claude-plugin/plugin.json` | 41 | manifest, version `0.5.0`, three `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`, `syntaxPalette` choice default `weight`), `types` pointer |
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
 | `hooks/register.tsx` | 284 | all `$` access: atoms, store I/O, the five hooks, JSX |
@@ -270,7 +270,7 @@ When the engine hot-reloads a mod from a folder it watches, it also writes the s
 
 ```
 GitHub jlopez/claude-mods  (.claude-plugin/marketplace.json)
-   entry: name collapse-tools, source git-subdir, url jlopez/claude-mod-collapse-tools.git, path .claude/skills/collapse-tools, version 0.4.0
+   entry: name collapse-tools, source git-subdir, url jlopez/claude-mod-collapse-tools.git, path .claude/skills/collapse-tools, version 0.5.0
         │  claude plugin marketplace add jlopez/claude-mods
         ▼
 ~/.claude/plugins/marketplaces/claude-mods/            clone of the marketplace repo
