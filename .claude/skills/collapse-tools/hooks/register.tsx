@@ -275,9 +275,10 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
-    const { from, isExpanded: drawnInFull, text } = e.props
-    // Another party's message folds; the person's own rows pass, and so does a view that draws in full.
-    if (!foldsMessage(from) || drawnInFull) return next(e)
+    const { from, text } = e.props
+    // Another party's message folds; the person's own rows pass. `isExpanded` is not consulted: the
+    // live transcript row carries it true, so passing on it would never fold.
+    if (!foldsMessage(from)) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const id = e.requestId
     const member = { ...overrideRef, id }

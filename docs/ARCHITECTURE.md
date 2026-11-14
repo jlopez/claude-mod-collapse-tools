@@ -44,7 +44,7 @@ Message rows (**inferred** from `message.ts` and the mount tests; the exact line
     (the engine's own row follows)
 ```
 
-- Which rows fold: every `UserMessage` whose `from` is present. A row with no `from` (the person's own prompts, task notifications) and a row with `isExpanded` true (ctrl+o, `--verbose`, the transient first draw) pass through to the engine.
+- Which rows fold: every `UserMessage` whose `from` is present. A row with no `from` (the person's own prompts, task notifications) passes through to the engine. `isExpanded` is not consulted (see the observed facts below).
 - `[+] ` is dim. `Message from <name>` is in the done color, not bold. The summary is dim and the line count (`N lines`, `1 line`) dim and right-aligned where tool rows put the status word. The width budget is the tool rows': viewport columns less 4 (100 when unknown), cut with `...`.
 - Summary: for a hand-back (text starts with `[Subagent hand-back]` and holds `The report follows:` followed by a line break) the first non-empty line of the report after the marker, else the first non-empty line of the text. Leading markdown heading marks (`## `) are stripped, list and quote marks stay, control characters are dropped, whitespace collapsed. Nothing left means no summary.
 - Line count: the lines of the body being summarised (the report for a hand-back, the whole text otherwise), less trailing blank lines.
@@ -220,7 +220,7 @@ The field lines sit outside the Button, as siblings in the column Box, because a
 ```
 ui.render { component: 'UserMessage', requestId: message id, props: { text, origin, isExpanded, task?, from?, onScreen? }, viewport? }
   │
-  ├─ if from is absent or props.isExpanded:  return next(e)     (the person's prompts, notifications, ctrl+o; before any read, so no subscription)
+  ├─ if from is absent:  return next(e)                         (the person's prompts, notifications; before any read, so no subscription)
   ├─ read collapsed, epoch, overrides[requestId], doneColorOverride                      (4 subscriptions)
   ├─ open = overrides[id].epoch === epoch ? overrides[id].open : !collapsed
   ├─ button = <Button key=`collapse-tools:${requestId}` plain onPress={toggle}> {messageSegments(text, from.name, columns, open, doneColor) → <Text/>} </Button>
@@ -243,9 +243,9 @@ Decided with the user before implementation.
 
 **Observed** 2026-11-14 with a probe on Claude Code 2.1.309:
 
-- A subagent hand-back row arrives with `origin: { kind: 'peer' }`, `from: { name: 'general-purpose' }` (the subagent's name, else its type), no `task`, and `isExpanded: false` in the normal fullscreen view. The `handback` flag in the transcript file is not in the props.
+- A subagent hand-back row arrives with `origin: { kind: 'peer' }`, `from: { name: 'general-purpose' }` (the subagent's name, else its type), no `task`, and `isExpanded: true` in the normal fullscreen view. The `handback` flag in the transcript file is not in the props.
 - `text` includes the engine's preamble. It begins `[Subagent hand-back] The text below is the final report of a subagent this session delegated to. ...` as one long line that ends with `The report follows:`, then a line break, then the report with every line indented two spaces.
-- `e.requestId` is the message id (a uuid). The row is first drawn once under a transient id (ending `-000000000000`) with `isExpanded: true`, then under its final id with `isExpanded: false`. The pass-through on `isExpanded` makes the transient draw the engine's own.
+- `e.requestId` is the message id. The transcript row's id ends `-000000000000` (the person's prompts' ids do too) and carries `isExpanded: true` on every draw. One more instance of the same message was drawn once under a plain uuid with `isExpanded: false`; where the engine draws that one was not established. So `isExpanded` does not tell the normal fullscreen view from ctrl+o for these rows, and the hook ignores it: a first build that passed through on `isExpanded: true` folded nothing in a live session.
 - The person's own prompts arrive with `origin.kind: 'composer'`, no `from`, `isExpanded: true`.
 - `$.store.set` works from inside a render hook. This mod does not use that.
 

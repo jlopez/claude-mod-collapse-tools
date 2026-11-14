@@ -441,7 +441,7 @@ const HANDBACK_TEXT = [
 ].join('\n')
 const PEER_TEXT = 'Widget line is back up.\nShift change at noon.'
 
-// Mounts one message row as the engine would draw it, `isExpanded` false as in the fullscreen view.
+// Mounts one message row as the engine would draw it, `isExpanded` true as in the fullscreen view.
 const mountMessage = (
   $: Engine,
   id: string,
@@ -452,7 +452,7 @@ const mountMessage = (
     plugin: 'collapse-tools',
     surface: 'terminal',
     component: 'UserMessage',
-    props: { text, origin: { kind: 'peer' }, isExpanded: false, ...extra },
+    props: { text, origin: { kind: 'peer' }, isExpanded: true, ...extra },
     requestId: id,
     viewport,
   })
@@ -493,11 +493,11 @@ test('/collapse-tools expands message rows together with tool rows', async ($, o
   expect(JSON.stringify(await row.drawn())).toContain('engine row')
 })
 
-test('a row the view draws in full passes through to the engine row', async ($, on) => {
+test('a row folds whatever isExpanded says', async ($, on) => {
   on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
-  const row = await mountMessage($, 'msg_5', HANDBACK_TEXT, { from: { name: 'general-purpose' }, isExpanded: true })
-  expect(await row.findAll({ type: 'Button' })).toHaveLength(0)
-  expect(JSON.stringify(await row.drawn())).toContain('engine row')
+  const row = await mountMessage($, 'msg_5', HANDBACK_TEXT, { from: { name: 'general-purpose' }, isExpanded: false })
+  expect(await row.find({ text: HANDBACK_LINE })).toBeDefined()
+  expect(JSON.stringify(await row.drawn())).not.toContain('engine row')
 })
 
 test('a row with no sender passes through, a task notification included', async ($, on) => {
