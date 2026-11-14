@@ -1,6 +1,6 @@
 # Claude Fold
 
-Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are `collapse-tools`. A toast at session start (once) tells you how.
+Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. It also folds a message another agent or session sent (a subagent's hand-back report, a teammate's message) into one line, `[+] Message from <name>  <summary>`, with its line count at the right. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are `collapse-tools`. A toast at session start (once) tells you how.
 
 ## Install
 
@@ -32,7 +32,7 @@ Tool calls are collapsed by default. These controls change that:
 | `/collapse-tools color <name\|#hex\|reset>` | Sets the color of the tool name of finished calls and saves it for future sessions. `reset` clears the saved color. |
 | `/collapse-tools summary on\|off` | Turns row summaries on or off and saves the choice for future sessions. |
 | `/collapse-tools highlight <weight\|status\|off\|reset>` | Sets how an expanded shell command is highlighted and saves it for future sessions. `reset` clears the saved choice. |
-| Click a line | Toggles that one call against the current default. Not saved across sessions. |
+| Click a line | Toggles that one call or message against the current default. Not saved across sessions. |
 
 With row summaries on (the default), a collapsed row for `Bash`, `Agent` or `Monitor` shows the call's own `description` input in place of the argument. With summaries off, rows show the raw argument.
 
@@ -40,7 +40,7 @@ An expanded `Bash` or `Monitor` command laid out one clause per line is highligh
 
 ## What the hooks do
 
-The plugin registers five hooks in `hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
+The plugin registers six hooks in `hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the message-row logic (what folds, summary line, line count) is in `hooks/message.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
 
 | Hook | What it does |
 |---|---|
@@ -48,6 +48,7 @@ The plugin registers five hooks in `hooks/register.tsx`. The pure logic (argumen
 | `turn.start` | Reloads the saved default and, when unset, the done color, the summaries setting and the highlighting palette. `/clear` resets the atoms and no `session.start` follows, so this restores the choice on the next turn. |
 | `command.run` (`collapse-tools`) | With `color ...`, sets or resets the done color; with `summary on\|off`, sets the summaries setting; with `highlight ...`, sets or resets the highlighting palette. Otherwise flips the default, increments the epoch (which invalidates per-call toggles), saves the default to the store and returns the reply text. |
 | `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (a one-line `Bash` or `Monitor` command is laid out one clause per line and highlighted under the palette in effect), or by the engine's own row for Agent, Task, AskUserQuestion, TodoWrite and ExitPlanMode. |
+| `ui.render` (`UserMessage`) | Folds a message sent by another party (a row with a sender) into a button line: collapsed `[+] Message from <name>  <summary>` and the line count; expanded the `[-]` header over the engine's own row. A row with no sender (your own prompts, task notifications) is left to the engine. It uses the same default, epoch and per-row toggle as the tool rows. |
 | `ui.render` (`ToolResult`) | Draws the engine's result when the call is expanded. Otherwise returns a `Box` with `display="none"`. |
 
 State atoms (declared in `types/index.d.ts` under `collapse-tools`):
@@ -60,7 +61,7 @@ State atoms (declared in `types/index.d.ts` under `collapse-tools`):
 | `doneColorOverride` | string or null | The color saved by `/collapse-tools color`; null defers to the `doneColor` option. |
 | `summariesOn` | boolean or null | The setting saved by `/collapse-tools summary`; null defers to the `summaries` option. |
 | `syntaxPaletteOverride` | string or null | The palette saved by `/collapse-tools highlight`; null defers to the `syntaxPalette` option. |
-| `overrides` | family of `{ epoch, open }` | Per-call toggle, keyed by `tool_use_id`. |
+| `overrides` | family of `{ epoch, open }` | Per-call toggle, keyed by `tool_use_id` (by message id for message rows). |
 
 ## Data and privacy
 

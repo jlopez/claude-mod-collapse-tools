@@ -68,7 +68,7 @@ export function formatToolName(tool: string): string {
   return `${rest.slice(0, split)}:${rest.slice(split + 2)}`
 }
 
-const squash = (text: string): string => text.replace(/\s+/g, ' ').trim()
+export const squash = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
 const length = (text: string): number => Array.from(text).length
 
@@ -133,7 +133,7 @@ const validColumns = (columns: number | undefined): number =>
   columns !== undefined && columns > 0 ? columns : DEFAULT_COLUMNS
 
 // Cuts the runs to `width` characters in total, ending with `...` where it cut.
-function clipSegments(segments: readonly Segment[], width: number): Segment[] {
+export function clipSegments(segments: readonly Segment[], width: number): Segment[] {
   if (segmentsLength(segments) <= width) return [...segments]
   const clipped: Segment[] = []
   let left = Math.max(width, 0)
@@ -153,7 +153,39 @@ function clipSegments(segments: readonly Segment[], width: number): Segment[] {
 
 // The value a header draws after the name: its text and the input field it stands for (null when
 // it stands for none). `whole` says the text is that field in full, single line, as sent.
-type MainValue = { text: string; key: string | null; whole: boolean }
+export type MainValue = { text: string; key: string | null; whole: boolean }
+
+// `marker name  arg            tail`, cut to `columns` less the margin: the name is drawn as given, the
+// arg dim in the room left when at least MIN_ARG columns remain, and the tail (a status word, a line
+// count) right-aligned. `shown` is the key of the field the row drew whole, or null when it drew none
+// that way.
+export function fitRow(
+  columns: number | undefined,
+  marker: string,
+  name: Segment,
+  main: MainValue | null,
+  tail: Segment | null,
+): { segments: Segment[]; shown: string | null } {
+  const width = Math.max(validColumns(columns) - MARGIN, 1)
+  const segments: Segment[] = [{ text: `${marker} `, dim: true }, name]
+  const tailRoom = tail === null ? 0 : GAP + length(tail.text)
+  const argRoom = width - segmentsLength(segments) - GAP - tailRoom
+  let shown: string | null = null
+  if (main !== null && main.text !== '' && argRoom >= MIN_ARG) {
+    const text = truncate(main.text, argRoom)
+    segments.push({ text: ' '.repeat(GAP) + text, dim: true })
+    if (main.whole && text === main.text) shown = main.key
+  }
+  if (tail !== null) {
+    const pad = Math.max(GAP, width - segmentsLength(segments) - length(tail.text))
+    segments.push({ ...tail, text: ' '.repeat(pad) + tail.text })
+  }
+  const clipped = clipSegments(segments, width)
+  // A clip past the tail may have cut into the value too: then it was not drawn whole.
+  if (segmentsLength(clipped) < segmentsLength(segments)) shown = null
+
+  return { segments: clipped, shown }
+}
 
 // `marker Name  arg            status`, cut to `columns` less the margin. `shown` is the key of the
 // field the row drew whole, or null when it drew none that way.
@@ -164,31 +196,12 @@ function headerRow(
   marker: string,
   main: MainValue | null,
 ): { segments: Segment[]; shown: string | null } {
-  const width = Math.max(validColumns(columns) - MARGIN, 1)
   const status = statusOf(call)
   const color = colorOf(status, doneColor)
   const word = statusWord(status)
-  const segments: Segment[] = [
-    { text: `${marker} `, dim: true },
-    { text: formatToolName(call.tool), color, bold: isBold(status) },
-  ]
-  const wordRoom = word === '' ? 0 : GAP + length(word)
-  const argRoom = width - segmentsLength(segments) - GAP - wordRoom
-  let shown: string | null = null
-  if (main !== null && main.text !== '' && argRoom >= MIN_ARG) {
-    const text = truncate(main.text, argRoom)
-    segments.push({ text: ' '.repeat(GAP) + text, dim: true })
-    if (main.whole && text === main.text) shown = main.key
-  }
-  if (word !== '') {
-    const pad = Math.max(GAP, width - segmentsLength(segments) - length(word))
-    segments.push({ text: ' '.repeat(pad) + word, color })
-  }
-  const clipped = clipSegments(segments, width)
-  // A clip past the status word may have cut into the value too: then it was not drawn whole.
-  if (segmentsLength(clipped) < segmentsLength(segments)) shown = null
+  const name: Segment = { text: formatToolName(call.tool), color, bold: isBold(status) }
 
-  return { segments: clipped, shown }
+  return fitRow(columns, marker, name, main, word === '' ? null : { text: word, color })
 }
 
 // A non-empty `summary` (the model-written description) is drawn where the arg would be; it stands
@@ -219,7 +232,7 @@ export function collapsedSegments(
 }
 
 // Any line break: CRLF, a lone LF, or a lone CR (which a terminal would draw as a return to column 0).
-const LINE_BREAK = /\r\n|\r|\n/
+export const LINE_BREAK = /\r\n|\r|\n/
 
 // The picked arg as an expanded header draws it: a multi-line value shows its first line only.
 // It counts as whole when that line is the full value, as sent, with no whitespace to collapse.
@@ -232,7 +245,7 @@ function expandedArg(field: ArgField): MainValue {
 }
 
 // Control characters a Text may not carry once lines are split: all but tab.
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g
+export const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g
 
 // A string value as drawn lines: its leading and trailing blank lines dropped, each line kept as sent
 // (indentation included, so code stays aligned) but for trailing whitespace and stray control characters.

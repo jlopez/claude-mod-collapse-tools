@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { DONE_COLOR_STORE_KEY, resolveDoneColor, validColor } from './accent'
+import { foldsMessage, messageSegments } from './message'
 import { SYNTAX_PALETTE_STORE_KEY, resolveSyntaxPalette, validSyntaxPalette } from './shell'
 import { HINT_TEXT, collapsedSegments, expandedRows, isExpanded, keepsEngineRow } from './summary'
 import type { Segment } from './summary'
@@ -27,6 +28,16 @@ type Override = { epoch: number; open: boolean }
 // A member written under an older epoch was reset by /collapse-tools and counts as no override.
 const openOf = (entry: Override | undefined, current: number): boolean | undefined =>
   entry !== undefined && entry.epoch === current ? entry.open : undefined
+
+// The drawing surface `$.ui.resolve` hands out, for the helpers both row hooks share.
+type Surface = ReturnType<EngineInterface['ui']['resolve']>
+
+const runs = (Text: Surface['Text'], segments: readonly Segment[]) =>
+  segments.map(segment => (
+    <Text color={segment.color} bold={segment.bold} dimColor={segment.dim}>
+      {segment.text}
+    </Text>
+  ))
 
 const STORE_KEY = 'collapsed'
 const USAGE =
@@ -234,15 +245,9 @@ export const register: Register = (on, options) => {
     const call = e.props
     const summary = resolveSummaries(summariesFlag, options.summaries) ? (describe(call.tool, call.input) ?? undefined) : undefined
     const columns = e.viewport?.columns
-    const runs = (segments: readonly Segment[]) =>
-      segments.map(segment => (
-        <Text color={segment.color} bold={segment.bold} dimColor={segment.dim}>
-          {segment.text}
-        </Text>
-      ))
     const button = (segments: readonly Segment[]) => (
       <Button key={`collapse-tools:${id}`} plain onPress={toggle}>
-        {runs(segments)}
+        {runs(Text, segments)}
       </Button>
     )
     if (!open) return button(collapsedSegments(call, columns, doneColor, summary))
@@ -263,8 +268,43 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         {button(header)}
         {fields.map(line => (
-          <Text>{runs(line)}</Text>
+          <Text>{runs(Text, line)}</Text>
         ))}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    const { from, text } = e.props
+    // Another party's message folds; the person's own rows pass. `isExpanded` is not consulted: the
+    // live transcript row carries it true, so passing on it would never fold.
+    if (!foldsMessage(from)) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const id = e.requestId
+    const member = { ...overrideRef, id }
+    const [global, current, entry, override] = await Promise.all([
+      read($, collapsed),
+      read($, epoch),
+      read($, member),
+      read($, doneColorOverride),
+    ])
+    const doneColor = override ?? configColor
+    const open = isExpanded(global, openOf(entry, current))
+    const toggle = async () => {
+      const [g, ep] = await Promise.all([read($, collapsed), read($, epoch)])
+      await update($, member, cur => ({ epoch: ep, open: !isExpanded(g, openOf(cur, ep)) }))
+    }
+    const button = (
+      <Button key={`collapse-tools:${id}`} plain onPress={toggle}>
+        {runs(Text, messageSegments(text, from.name, e.viewport?.columns, open, doneColor))}
+      </Button>
+    )
+    if (!open) return button
+
+    return (
+      <Box flexDirection="column">
+        {button}
+        {await next(e)}
       </Box>
     )
   })
