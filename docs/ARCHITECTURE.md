@@ -8,6 +8,8 @@ Sources: the mod's source under `.claude/skills/collapse-tools/`, the vendored A
 
 The transcript draws two rows per tool call: a `ToolUse` row (`Bash(npm run check)` with a spinner while running) and a `ToolResult` block under it (stdout, a diff, a file listing). The mod replaces the first with a one-line clickable button and hides the second. Nothing is sent to the model and nothing about the call is changed; this is a display-only mod.
 
+It also folds the message rows other parties send: a subagent's hand-back report, a teammate's message, another session's message. These are long model-written texts that the engine draws in full; the mod draws each as one line, `[+] Message from <name>  <summary>` with a right-aligned line count (see "Message rows" below).
+
 Collapsed rows (**inferred** from `collapsedSegments` and the segment tests; the exact strings below are asserted by `register.test.ts`):
 
 ```
@@ -34,12 +36,27 @@ Expanded row, after a click (**inferred**, asserted in tests):
 
 The header is the collapsed row with `[-]` for `[+]` (same text, width budget and status word), except that a multi-line picked argument shows its first line only; so a click grows the row downward without changing its first line. Under it, one line per input field, indented 4: the `key:` label in the `suggestion` theme key, padded to the widest label (capped at 16 columns), then the value dim (a `Bash`/`Monitor` command laid out one clause per line is highlighted instead; see the decision note in section 3). `ARG_FIELDS` come first, then the input's own order. The field the header drew whole is left out (here `description`, drawn as the summary, which counts as whole only when cleaning left the raw description unchanged); a cut, multi-line or cleaned one stays. Strings keep their line breaks and every line's indentation, the first line's included (continuation lines are indented to the value column; leading and trailing blank lines, trailing spaces and control characters other than tab are dropped, and a lone CR breaks the line), objects and arrays are compact JSON, empty strings are skipped, and nothing is cut: a long line wraps at the terminal edge. Below the list the engine's normal `ToolResult` block is drawn. For `Agent`, `Task`, `AskUserQuestion`, `TodoWrite`, `ExitPlanMode` the field list is replaced by the engine's own `ToolUse` row, because those rows carry more than `Name(arg)` (a judgment from the types, not a live check, per the README).
 
+Message rows (**inferred** from `message.ts` and the mount tests; the exact lines are asserted by `message.test.ts` and `register.test.ts`):
+
+```
+[+] Message from general-purpose  Widget throughput: results         4 lines
+[-] Message from general-purpose  Widget throughput: results         4 lines
+    (the engine's own row follows)
+```
+
+- Which rows fold: every `UserMessage` whose `from` is present. A row with no `from` (the person's own prompts, task notifications) and a row with `isExpanded` true (ctrl+o, `--verbose`, the transient first draw) pass through to the engine.
+- `[+] ` is dim. `Message from <name>` is in the done color, not bold. The summary is dim and the line count (`N lines`, `1 line`) dim and right-aligned where tool rows put the status word. The width budget is the tool rows': viewport columns less 4 (100 when unknown), cut with `...`.
+- Summary: for a hand-back (text starts with `[Subagent hand-back]` and holds `The report follows:` followed by a line break) the first non-empty line of the report after the marker, else the first non-empty line of the text. Leading markdown heading marks (`## `) are stripped, list and quote marks stay, control characters are dropped, whitespace collapsed. Nothing left means no summary.
+- Line count: the lines of the body being summarised (the report for a hand-back, the whole text otherwise), less trailing blank lines.
+- Expanded (after a click): the `[-]` header, same text, in a column Box over `await next(e)`, the engine's own row untouched.
+- The toggle uses the same `overrides` family (keyed by `e.requestId`), `collapsed` default and `epoch` as tool rows, so a click flips that one row and `/collapse-tools` flips message rows with the tool rows. No new setting, atom or store key. The command's reply texts are unchanged ("Tool calls collapsed to one line." / "Tool calls expanded.").
+
 Controls:
 
 | Control | Effect | Persisted |
 |---|---|---|
-| click a row | toggles that call against the current default | no (session state) |
-| `/collapse-tools` | flips the default for all calls, clears every per-call toggle | yes, store key `collapsed` |
+| click a row | toggles that call or message against the current default | no (session state) |
+| `/collapse-tools` | flips the default for all calls and message rows, clears every per-call toggle | yes, store key `collapsed` |
 | `/collapse-tools color <name\|#hex\|reset>` | sets the done color | yes, store key `doneColor` |
 | `/collapse-tools summary on\|off` | row summaries | yes, store key `summaries` |
 | `/collapse-tools highlight <weight\|status\|off\|reset>` | shell command highlighting palette | yes, store key `syntaxPalette` |
@@ -82,8 +99,9 @@ The module runs in its own environment: no DOM, no Node, no `require`, no timers
 | `command.run` with `{ command: 'collapse-tools' }` | when the person types `/collapse-tools ...` | nothing (a registered command has no core) | the command |
 | `ui.render` with `{ component: 'ToolUse' }` | when the engine is about to draw a tool row; once per input value (props, viewport width), on plugin load, on `$.ui.invalidate`, and when a `$.state` value it read changes | the engine's own drawing | the one-line row |
 | `ui.render` with `{ component: 'ToolResult' }` | same, for the result block | the engine's result drawing | hide or show the result |
+| `ui.render` with `{ component: 'UserMessage' }` | same, for a transcript row carrying a message (the person's prompt, a notification, another party's message) | the engine's own row | fold a row sent by another party into one line |
 
-`ui.render` is one event for every component with a render site. The input is discriminated by `component`; `e.requestId` is the instance (the `tool_use_id` for tool rows), `e.viewport` carries `columns` and `rows` when the surface has measured. A tree the hook returns is validated; an invalid tree or a throw while drawing falls back to the engine's own drawing, with a line in the debug log (and in the transcript while the folder is hot-reloaded).
+`ui.render` is one event for every component with a render site. The input is discriminated by `component`; `e.requestId` is the instance (the `tool_use_id` for tool rows, the message id for `UserMessage`), `e.viewport` carries `columns` and `rows` when the surface has measured. A tree the hook returns is validated; an invalid tree or a throw while drawing falls back to the engine's own drawing, with a line in the debug log (and in the transcript while the folder is hot-reloaded).
 
 ### Where state lives
 
@@ -117,12 +135,13 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 | `.claude-plugin/plugin.json` | 41 | manifest, version `0.5.0`, three `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`, `syntaxPalette` choice default `weight`), `types` pointer |
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
-| `hooks/register.tsx` | 284 | all `$` access: atoms, store I/O, the five hooks, JSX |
-| `hooks/summary.ts` | 331 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, truncation, the keep-engine-row set, `isExpanded` |
+| `hooks/register.tsx` | 323 | all `$` access: atoms, store I/O, the six hooks, JSX |
+| `hooks/summary.ts` | 344 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, `fitRow` (the row budgeting both row kinds share), truncation, the keep-engine-row set, `isExpanded` |
+| `hooks/message.ts` | 61 | pure: `foldsMessage`, the hand-back body, `summaryOf`, `lineCount`, `messageSegments` |
 | `hooks/shell.ts` | 376 | pure: `SHELL_TOOLS`, `isShellTool`, the one shell lexer (`scanShell`) and its two consumers: `formatShell` (one clause per line at top-level `&&`, `||`, `|`, `|&`, `;`) and `tokenize` (a clause line into `command`, `operator`, `string`, `variable`, `plain` runs); the palette tables, `styleTokens`, `resolveSyntaxPalette` |
 | `hooks/summarize.ts` | 38 | pure: the described-tools allowlist, `cleanSummary`, `describe`, `resolveSummaries` |
 | `hooks/accent.ts` | 21 | pure: color validation (`#rrggbb`, named, `...Bright`, `claude`), `resolveDoneColor` |
-| `hooks/*.test.ts` | 1046 | 83 tests across 5 files under `claude plugin test` |
+| `hooks/*.test.ts` | 1211 | 100 tests across 6 files under `claude plugin test` |
 | `types/index.d.ts` | 13 | the state contract |
 | `README.md` (plugin folder) | | what the plugin directory review asks for: a per-hook description |
 
@@ -138,7 +157,7 @@ The split is deliberate: `register.tsx` is the only file that touches `$`, the p
   doneColorOverride: string | null                    // null defers to options.doneColor
   summariesOn: boolean | null                         // null defers to options.summaries
   syntaxPaletteOverride: string | null                // null defers to options.syntaxPalette
-  overrides: StateFamily<{ epoch: number; open: boolean }>  // per tool_use_id
+  overrides: StateFamily<{ epoch: number; open: boolean }>  // per tool_use_id, or message id for message rows
 }
 ```
 
@@ -196,6 +215,40 @@ Decided with the user before implementation; recorded here so the next room does
 
 The field lines sit outside the Button, as siblings in the column Box, because a Button's children must be strings or Text; only the header is clickable. When the engine row is replaced (`!open`, or an expanded tool outside the keep set), `next(e)` is never called, so no plugin beneath this one and none of the engine's own `ToolUse` drawing runs for that row.
 
+### Draw a message row
+
+```
+ui.render { component: 'UserMessage', requestId: message id, props: { text, origin, isExpanded, task?, from?, onScreen? }, viewport? }
+  │
+  ├─ if from is absent or props.isExpanded:  return next(e)     (the person's prompts, notifications, ctrl+o; before any read, so no subscription)
+  ├─ read collapsed, epoch, overrides[requestId], doneColorOverride                      (4 subscriptions)
+  ├─ open = overrides[id].epoch === epoch ? overrides[id].open : !collapsed
+  ├─ button = <Button key=`collapse-tools:${requestId}` plain onPress={toggle}> {messageSegments(text, from.name, columns, open, doneColor) → <Text/>} </Button>
+  │
+  ├─ if !open: return button                                                           (engine row replaced, next() never called)
+  └─ else:     return <Box column> {button} {await next(e)} </Box>
+```
+
+`messageSegments` uses the same row builder as the tool rows (`fitRow` in `summary.ts`, which `headerRow` now calls too): marker, name segment, dim arg, right-aligned tail. For a tool row the tail is the status word (none when done), for a message row the dim line count. `toggle` is the tool row's, on the message's family member. The `runs` helper that turns segments into `Text` is shared by both hooks.
+
+### Decision note: every `from` row folds
+
+Decided with the user before implementation.
+
+- **Chosen: fold every `UserMessage` that has a `from`.** Hand-backs, teammates and other sessions alike.
+- **Why not hand-backs only.** The transcript's `handback` flag is not in the props (**observed**, below), so a hand-back is recognised only by its text prefix, which is the engine's wording and may change. The prefix is therefore used only to pick a nicer summary line (the report's first line instead of the preamble), never to decide whether to fold; a missing prefix falls back to the first line of the text.
+- **Shared toggle.** Message rows share the `overrides` family, `collapsed` and `epoch` with the tool rows, so `/collapse-tools` flips them together, by the user's choice. There is no separate setting.
+
+### Observed facts about `UserMessage`
+
+**Observed** 2026-11-14 with a probe on Claude Code 2.1.309:
+
+- A subagent hand-back row arrives with `origin: { kind: 'peer' }`, `from: { name: 'general-purpose' }` (the subagent's name, else its type), no `task`, and `isExpanded: false` in the normal fullscreen view. The `handback` flag in the transcript file is not in the props.
+- `text` includes the engine's preamble. It begins `[Subagent hand-back] The text below is the final report of a subagent this session delegated to. ...` as one long line that ends with `The report follows:`, then a line break, then the report with every line indented two spaces.
+- `e.requestId` is the message id (a uuid). The row is first drawn once under a transient id (ending `-000000000000`) with `isExpanded: true`, then under its final id with `isExpanded: false`. The pass-through on `isExpanded` makes the transient draw the engine's own.
+- The person's own prompts arrive with `origin.kind: 'composer'`, no `from`, `isExpanded: true`.
+- `$.store.set` works from inside a render hook. This mod does not use that.
+
 ### Draw a result block
 
 ```
@@ -223,13 +276,15 @@ command.run { command: 'collapse-tools', args }
   ├─ 'summary on|off' → update(summariesOn); store.set('summaries')
   ├─ 'highlight <p>'  → validSyntaxPalette; update(syntaxPaletteOverride); store.set('syntaxPalette') | 'reset' → null; store.delete | invalid → HIGHLIGHT_USAGE
   ├─ anything else    → { text: USAGE }
-  └─ ''               → next = !collapsed; update(collapsed); update(epoch, n+1); store.set('collapsed'); { text }
+  └─ ''               → (tool and message rows alike) next = !collapsed; update(collapsed); update(epoch, n+1); store.set('collapsed'); { text }
 ```
 
 The returned `{ text }` is drawn as the command's output row and read by the model. Every write to the color, summaries or palette atom redraws every row, since every row reads all three.
 
 ### The pure functions
 
+- `messageSegments(text, name, columns, open, doneColor)`: `[+]`/`[-]`, `Message from <name>` in the done color, the dim summary, the dim line count right-aligned, all through `fitRow`. `summaryOf` and `lineCount` read the body (`bodyOf`: a hand-back's report, else the whole text); `foldsMessage(from)` is true when a sender is present.
+- `fitRow(columns, marker, name, main, tail)`: the budgeting both row kinds share (width less margin, the arg drawn only if 4 columns remain, the tail right-aligned, a final clip). `headerRow` is a thin wrapper that supplies the tool name and status word.
 - `collapsedSegments(call, columns, doneColor, summary?)`: a thin wrapper over the private `headerRow` with the `[+]` marker. `headerRow` builds the marker, the name, then budgets `width - name - GAP - wordRoom` for the argument. The argument is drawn only if at least 4 columns remain. The status word is padded to the right edge. A final `clipSegments` guarantees the total fits. It also reports which field it drew whole (the summary stands for `description`, whole only when it equals the trimmed raw `input.description`).
 - `expandedRows(call, columns, doneColor, summary?, palette = 'weight')`: returns `{ header, fields }`. `header` is `headerRow` with `[-]`; without a summary the picked arg goes through `expandedArg`, which keeps the first line of a multi-line value and counts it whole only when that line equals the trimmed raw value. `fields` (from `fieldRows`) is one `Segment[]` per drawn line: `{ text: '    ' }`, `{ text: 'key:' + pad, color: 'suggestion' }`, `{ text: value, dim: true }`, and `[{ indent }, { line, dim }]` for each continuation line. Order is `ARG_FIELDS` then insertion order; the field `headerRow` drew whole is skipped; values are uncut. String values go through `stringLines`: split on CRLF, LF or a lone CR, control characters but tab dropped, each line `trimEnd`ed, leading and trailing blank lines dropped, leading indentation kept. A shell command split into clauses replaces the one `{ value, dim }` run of each line with the styled runs of `styleTokens`.
 - `tokenize(line)`: `Token[]` of kinds `command`, `operator`, `string`, `variable`, `plain`; the texts join to the line. A leading `&&`/`||`/`|&`/`|`/`;` is the operator; the first word wholly outside every frame that is not an assignment (words split at unescaped whitespace, so `my\ tool` is one word) is the command, unless it starts with `;&|<>` or holds an unescaped `<` or `>` (`2>/dev/null`, `ls>out`: a redirection, so no command is marked); single quotes are a string, and so is an ANSI-C `$'...'` with its `$`; double quotes a string with `$name`/`${...}`/`$(...)`/backtick spans split out as variables; a backtick span is a variable (old-style command substitution); groups `( )`, `{ }`, `[[ ]]` are transparent. Redirections are plain (parked); so is a `#` comment, from a top-level unescaped `#` that starts a word to the end of the line, variables inside it included (a `comment` kind is parked). A line that ends inside a frame is one plain token.
@@ -250,7 +305,7 @@ npm run check  =  claude plugin validate .claude/skills/collapse-tools
                && claude plugin test .claude/skills/collapse-tools
 ```
 
-**Observed** on this branch: all three pass, 83 tests across 5 files in about half a second.
+**Observed** on this branch: all three pass, 100 tests across 6 files in about a second.
 
 - `validate` parses the manifest and the module source the way the engine will, and lists every event hooked, every `$` call and every `$.state` key against the contract.
 - `tsc` type-checks against `vendor/claude-code/claude-code.d.ts`. `tsconfig.json` sets `types: []` (no `@types/node`; the module has no Node), `jsx: react` with `jsxFactory: h`, `moduleResolution: bundler`, strict plus `noUncheckedIndexedAccess`, and includes the vendor file, `hooks/`, `types/` and the tests.

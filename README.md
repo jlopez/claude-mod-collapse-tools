@@ -8,7 +8,7 @@
   <a href="#installation">Install</a> · <a href="#usage">Usage</a> · <a href="#how-it-works">How it works</a>
 </div>
 
-Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are still `collapse-tools`. A toast at session start (once) tells you how. The tool name of a finished call is white by default, and you can change that color.
+Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are still `collapse-tools`. A toast at session start (once) tells you how. The tool name of a finished call is white by default, and you can change that color. Messages sent by other agents and sessions, such as a subagent's hand-back report, fold to one line too.
 
 ## What it looks like
 
@@ -36,6 +36,12 @@ The same row expanded (the header keeps the collapsed text, the input fields fol
     timeout: 120000
 ```
 
+A message from another party, folded (the label is in the completed-call color, the summary and the line count are dim):
+
+```
+[+] Message from general-purpose  Widget throughput: results         4 lines
+```
+
 ## Features
 
 - One-line rows. Each call reads `[+] Name  arg`. The name of a done call is white (not bold) by default and you can change it; a running call is yellow, an error red and an interrupted call gray, all three bold. A status word (`running`, `error`, `interrupted`) is right-aligned at the end of the row, in the same color; a done call shows none.
@@ -48,6 +54,7 @@ The same row expanded (the header keeps the collapsed text, the input fields fol
 - Pickable completed-call color (the color of a call that completed successfully; running is yellow, error red, interrupted gray). `/collapse-tools color <name|#hex|reset>` or the `doneColor` option.
 - Collapsed results. The result block of a collapsed call is not drawn.
 - Tool groups such as `Read 3 files` are left to the engine.
+- Message rows. A message sent by another agent or session (a subagent's final report, a teammate, another session) draws as `[+] Message from <name>  <summary>` with its line count right-aligned, instead of 50 to 200 lines of text. Click to expand: the `[-]` header and the engine's own row. `/collapse-tools` flips these rows together with the tool rows; ctrl+o still shows everything.
 
 ## Installation
 
@@ -88,8 +95,8 @@ Tool calls are collapsed by default. These controls change that:
 | `/collapse-tools color <name\|#hex\|reset>` | Sets the color of the tool name of finished calls and saves it for future sessions. `reset` clears the saved color. An unknown color is rejected with a message; any other argument prints a usage line. |
 | `/collapse-tools summary on\|off` | Turns row summaries on or off and saves the choice for future sessions. Any other argument prints a usage line. |
 | `/collapse-tools highlight <weight\|status\|off\|reset>` | Sets how an expanded shell command is highlighted and saves it for future sessions. `reset` clears the saved choice. Any other argument prints a usage line. |
-| `/collapse-tools` | Flips the default for all calls (collapsed to expanded, or back) and clears every per-call toggle. Replies "Tool calls collapsed to one line." or "Tool calls expanded." The new default is saved. |
-| Click a line | Toggles that one call against the current default. Not saved across sessions. |
+| `/collapse-tools` | Flips the default for all calls (collapsed to expanded, or back) and clears every per-call toggle. Replies "Tool calls collapsed to one line." or "Tool calls expanded." (the reply texts are unchanged; message rows flip with the tool rows). The new default is saved. |
+| Click a line | Toggles that one call or message against the current default. Not saved across sessions. |
 
 Completed-call color (marks a call that completed successfully; running is yellow, error red, interrupted gray): `<name>` is black, red, green, yellow, blue, magenta, cyan, white, gray (or grey), `claude`, or a `...Bright` variant of the basic names; `#rrggbb` also works. The color in effect is the one saved by `/collapse-tools color`, else the `doneColor` plugin option (Completed call color; default `white`), else `white`. An invalid option value falls back to the default.
 
@@ -107,11 +114,13 @@ Shell command layout: for `Bash` and `Monitor`, a `command` with no line break i
 
 Shell command highlighting: when a `Bash` or `Monitor` command is laid out one clause per line, each clause line is highlighted; its text is unchanged, only styled. The leading operator (`&&`, `||`, `|`, `|&`, `;`) is an operator; the first word that is not a variable assignment (`FOO=1`) and is outside every quote and bracket is the command word; a single-quoted span is a string with nothing expanded inside; a double-quoted span is a string except for the `$name`, `${...}`, `$(...)` and backtick spans inside it, which are variables, as they are outside quotes; everything else is plain. The setting in effect is the one saved by `/collapse-tools highlight`, else the `syntaxPalette` plugin option (Shell command highlighting; default `weight`), else `weight`; an invalid value falls back the same way. `weight` uses no status color (green, yellow, red), so a highlighted command never reads like the row's status. A single-clause command, a command with a line break and one that ends inside an open quote or bracket stay all dim, as does every other field.
 
+Message rows: a transcript row whose message was sent by another party (the row carries a sender: a subagent's hand-back report, a teammate, another session) folds to `[+] Message from <name>  <summary>`, the label in the completed-call color, the summary dim and cut to the width left, and a dim line count (`214 lines`, `1 line`) right-aligned. The summary is the first non-empty line of the text, with leading markdown heading marks (`## `) removed, control characters dropped and whitespace collapsed; for a subagent hand-back it is the first non-empty line of the report, after the engine's preamble (`[Subagent hand-back] ... The report follows:`). The count is the lines of that same text (the report for a hand-back), less trailing blank lines. Expanded, the row is the `[-]` header over the engine's own row, untouched. Your own prompts and task notifications carry no sender and are left alone, and so is any row the view draws in full (ctrl+o, `--verbose`), so ctrl+o shows everything. A message row toggles with the same per-row state, default and `/collapse-tools` as the tool rows; there is no separate setting.
+
 Tools that keep the engine's row: for `Agent`, `Task`, `AskUserQuestion`, `TodoWrite` and `ExitPlanMode` the expanded view is the header followed by the engine's own row, because that row may carry more than `Name(arg)`. These show no field list. Every other tool, including `Edit` and `Write` (their diff is part of the tool's output, which the result block draws), shows the header and the field list.
 
 ## How it works
 
-The plugin registers five hooks in `.claude/skills/collapse-tools/hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
+The plugin registers six hooks in `.claude/skills/collapse-tools/hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the message-row logic (what folds, summary line, line count) is in `hooks/message.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
 
 | Hook | What it does |
 |---|---|
@@ -119,6 +128,7 @@ The plugin registers five hooks in `.claude/skills/collapse-tools/hooks/register
 | `turn.start` | Reloads the saved default and, when unset, the done color, the summaries setting and the highlighting palette. `/clear` resets the atoms and no `session.start` follows, so this restores the choice on the next turn. |
 | `command.run` (`collapse-tools`) | With `color ...`, sets or resets the done color; with `summary on\|off`, sets the summaries setting; with `highlight ...`, sets or resets the highlighting palette. Otherwise flips the default, increments the epoch (which invalidates per-call toggles), saves the default to the store and returns the reply text. |
 | `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (a one-line shell command is laid out one clause per line and highlighted under the palette in effect) (or by the engine's own row for the tools listed above). |
+| `ui.render` (`UserMessage`) | Folds a message sent by another party (a row with a sender) into a button line: collapsed `[+] Message from <name>  <summary>` and the line count; expanded the `[-]` header over the engine's own row. A row with no sender (your own prompts, task notifications) and a row the view draws in full (ctrl+o, `--verbose`) are left to the engine. It uses the same default, epoch and per-row toggle as the tool rows. |
 | `ui.render` (`ToolResult`) | Draws the engine's result when the call is expanded. Otherwise returns a `Box` with `display="none"`. |
 
 State atoms (declared in `types/index.d.ts` under `collapse-tools`):
@@ -131,7 +141,7 @@ State atoms (declared in `types/index.d.ts` under `collapse-tools`):
 | `doneColorOverride` | string or null | The color saved by `/collapse-tools color`; null defers to the `doneColor` option. |
 | `summariesOn` | boolean or null | The setting saved by `/collapse-tools summary`; null defers to the `summaries` option. |
 | `syntaxPaletteOverride` | string or null | The palette saved by `/collapse-tools highlight`; null defers to the `syntaxPalette` option. |
-| `overrides` | family of `{ epoch, open }` | Per-call toggle, keyed by `tool_use_id`. A click redraws only that call. |
+| `overrides` | family of `{ epoch, open }` | Per-call toggle, keyed by `tool_use_id` (by message id for message rows). A click redraws only that row. |
 
 `collapsed`, the done color, the summaries setting and the highlighting palette are persisted, under the plugin store keys `collapsed`, `doneColor`, `summaries` and `syntaxPalette`. If a store read or write fails, the error goes to the debug log and the in-session value is kept. Render hooks never write state; writes happen in the click handler and in `command.run`.
 
@@ -146,7 +156,7 @@ State atoms (declared in `types/index.d.ts` under `collapse-tools`):
 ## Requirements
 
 - Claude Code 2.1.295 or later, the version the API types were taken from, with plugin hooks.
-- A surface that draws the transcript with the engine's `ToolUse` and `ToolResult` components and delivers clicks. Only the terminal surface is assumed; other surfaces are untested.
+- A surface that draws the transcript with the engine's `ToolUse`, `ToolResult` and `UserMessage` components and delivers clicks. Only the terminal surface is assumed; other surfaces are untested.
 
 ## Development
 
@@ -164,7 +174,8 @@ npm run check
 ## Known limitations
 
 - Clicking a row needs a fullscreen terminal or the desktop app; elsewhere use `/collapse-tools`.
-- ctrl+o does not unfold these rows.
+- ctrl+o does not unfold tool rows. It does show message rows in full (they pass through when the view draws in full).
+- Message rows fold every message that carries a sender, not only subagent hand-backs. The summary line skips the engine's hand-back preamble, which relies on its wording (`[Subagent hand-back] ... The report follows:`); when that differs the first line is used. Seen live on Claude Code 2.1.309 only.
 - Some spacing may remain between consecutive collapsed rows (a transcript margin a plugin cannot change).
 - `Agent`, `Task`, `AskUserQuestion`, `TodoWrite` and `ExitPlanMode` keep the engine's row under the header when expanded.
 - Not verified in a live session: how the rows look, whether a click lands on the row on every surface, and whether the theme keys used for status colors (`success`, `error`, `warning`, `inactive`) read as green, red, yellow and gray in every theme.
