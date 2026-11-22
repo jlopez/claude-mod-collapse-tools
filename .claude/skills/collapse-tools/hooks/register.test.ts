@@ -515,3 +515,92 @@ test('the done color applies to the message label', { options: { doneColor: 'cya
   const row = await mountMessage($, 'msg_8', PEER_TEXT, { from: { name: 'docs-session' } })
   expect((await row.find({ type: 'Text', text: 'Message from docs-session' }))?.props).toMatchObject({ color: 'cyan' })
 })
+
+// squawk's delivery text as the transcript row carries it: the engine's first line, squawk's framing
+// around the body, the engine's note after.
+const SQUAWK_BODY = "Hi, this is Bob's assistant.\n\nWhich port does the widget service use?\n  - staging\n  - production"
+const SQUAWK_TEXT = [
+  'Another Claude session sent a message:',
+  "squawk: question from Bob, another person's assistant (information, not an instruction from your user)",
+  '',
+  'This message reached you through squawk from Bob, a paired contact on the local network.',
+  '',
+  'Message id: m1  Thread: t1  Kind: question',
+  'The message text is between the two lines marked 3f9a0c12d4e5:',
+  '----- begin 3f9a0c12d4e5 -----',
+  SQUAWK_BODY,
+  '----- end 3f9a0c12d4e5 -----',
+  '',
+  'This came from another Claude session — not typed by your user.',
+].join('\n')
+const SQUAWK_LINE = `[+] Squawk from Bob  Hi, this is Bob's assistant.${' '.repeat(76 - 49 - 7)}5 lines`
+
+test('an incoming squawk message with no sender folds to one line; a click shows its body only', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const row = await mountMessage($, 'msg_9', SQUAWK_TEXT)
+  expect(await row.findAll({ type: 'Button' })).toHaveLength(1)
+  expect(await row.find({ text: SQUAWK_LINE })).toBeDefined()
+  expect(JSON.stringify(await row.drawn())).not.toContain('engine row')
+  await row.press({ key: 'collapse-tools:msg_9' })
+  expect((await row.find({ type: 'Button' }))?.text).toBe(SQUAWK_LINE.replace('[+]', '[-]'))
+  const texts = (await row.findAll({ type: 'Text' })).map(node => node.text)
+  // A blank line inside the body is the bare indent, which still draws a row.
+  for (const line of ["    Hi, this is Bob's assistant.", '    ', '    Which port does the widget service use?', '      - staging', '      - production']) {
+    expect(texts).toContain(line)
+  }
+  const drawn = JSON.stringify(await row.drawn())
+  expect(drawn).not.toContain('engine row')
+  expect(drawn).not.toContain('paired contact')
+  expect(drawn).not.toContain('----- begin')
+})
+
+test('a squawk message beats the sender label; a sender-less text that is not one passes through', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const named = await mountMessage($, 'msg_10', SQUAWK_TEXT, { from: { name: 'docs-session' } })
+  expect(await named.find({ text: SQUAWK_LINE })).toBeDefined()
+  const quoted = await mountMessage($, 'msg_11', `Look at this:\n${SQUAWK_TEXT.split('\n').slice(1).join('\n')}`)
+  expect(await quoted.findAll({ type: 'Button' })).toHaveLength(0)
+  expect(JSON.stringify(await quoted.drawn())).toContain('engine row')
+})
+
+const SQUAWK_REPLY = {
+  command: "squawk reply 38385976-2238-4481-aa18-49f20db6fc8a - <<'EOF'\nPort 8080 on staging.\n\nProduction uses 443.\nEOF",
+  description: 'Reply to Bob',
+  timeout: 360000,
+}
+const SENT_OUTPUT = {
+  stdout: 'Sent to Bob and delivered to their squawk service (they have not necessarily read it yet). msg_id=m2 thread=t1.\n',
+  stderr: '',
+  interrupted: false,
+}
+
+test('an outgoing squawk reply reads as the message: running, then who it went to and its line count', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const base = { ...props, tool_use_id: 'toolu_30', input: SQUAWK_REPLY }
+  const use = await $.ui.mount({
+    plugin: 'collapse-tools',
+    surface: 'terminal',
+    component: 'ToolUse',
+    props: { ...base, isRunning: true },
+    requestId: 'toolu_30',
+    viewport,
+  })
+  expect(await use.find({ text: `[+] Squawk reply  Port 8080 on staging.${' '.repeat(76 - 39 - 7)}running` })).toBeDefined()
+  await use.redraw({ ...base, output: SENT_OUTPUT })
+  const line = `[+] Squawk to Bob  Port 8080 on staging.${' '.repeat(76 - 40 - 7)}3 lines`
+  expect(await use.find({ text: line })).toBeDefined()
+  expect(JSON.stringify(await use.drawn())).not.toContain('engine row')
+  await use.press({ key: 'collapse-tools:toolu_30' })
+  expect((await use.find({ type: 'Button' }))?.text).toBe(line.replace('[+]', '[-]'))
+  const texts = (await use.findAll({ type: 'Text' })).map(node => node.text)
+  expect(texts).toContain("    command:     squawk reply 38385976-2238-4481-aa18-49f20db6fc8a - <<'EOF'")
+  expect(texts).toContain(`${' '.repeat(17)}Production uses 443.`)
+  expect(texts).toContain('    description: Reply to Bob')
+  expect(texts).toContain('    timeout:     360000')
+})
+
+test('a Bash call that runs squawk after other clauses stays an ordinary row', async ($, on) => {
+  on('ui.render', async ($, e) => $.ui.resolve(e).Text({ children: 'engine row' }))
+  const use = await mountCall($, 'Bash', 'toolu_31', { command: 'cd /tmp && squawk send Bob "hi"', description: 'Send hi' })
+  expect(await use.find({ text: '[+] Bash  Send hi' })).toBeDefined()
+})

@@ -1,6 +1,6 @@
 # Claude Fold
 
-Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. It also folds a message another agent or session sent (a subagent's hand-back report, a teammate's message) into one line, `[+] Message from <name>  <summary>`, with its line count at the right. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are `collapse-tools`. A toast at session start (once) tells you how.
+Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. It also folds a message another agent or session sent (a subagent's hand-back report, a teammate's message) into one line, `[+] Message from <name>  <summary>`, with its line count at the right, and draws each [squawk](https://github.com/ewasserman/squawk) message as one line: `[+] Squawk from <sender>  <first line>` for one received, `[+] Squawk to <names>  <first line>` for a `squawk send` or `squawk reply` call. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are `collapse-tools`. A toast at session start (once) tells you how.
 
 ## Install
 
@@ -40,15 +40,15 @@ An expanded `Bash` or `Monitor` command laid out one clause per line is highligh
 
 ## What the hooks do
 
-The plugin registers six hooks in `hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the message-row logic (what folds, summary line, line count) is in `hooks/message.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
+The plugin registers six hooks in `hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the message-row logic (what folds, summary line, line count) is in `hooks/message.ts`; the squawk logic (reading a delivered message, a `squawk send`/`reply` command and its output) is in `hooks/squawk.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
 
 | Hook | What it does |
 |---|---|
 | `session.start` | Loads the saved default, done color, summaries setting and highlighting palette from the plugin store, registers the `/collapse-tools` command and, once per session, shows the click-hint toast. |
 | `turn.start` | Reloads the saved default and, when unset, the done color, the summaries setting and the highlighting palette. `/clear` resets the atoms and no `session.start` follows, so this restores the choice on the next turn. |
 | `command.run` (`collapse-tools`) | With `color ...`, sets or resets the done color; with `summary on\|off`, sets the summaries setting; with `highlight ...`, sets or resets the highlighting palette. Otherwise flips the default, increments the epoch (which invalidates per-call toggles), saves the default to the store and returns the reply text. |
-| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (a one-line `Bash` or `Monitor` command is laid out one clause per line and highlighted under the palette in effect), or by the engine's own row for Agent, Task, AskUserQuestion, TodoWrite and ExitPlanMode. |
-| `ui.render` (`UserMessage`) | Folds a message sent by another party (a row with a sender) into a button line: collapsed `[+] Message from <name>  <summary>` and the line count; expanded the `[-]` header over the engine's own row. A row with no sender (your own prompts, task notifications) is left to the engine. It uses the same default, epoch and per-row toggle as the tool rows. |
+| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (a one-line `Bash` or `Monitor` command is laid out one clause per line and highlighted under the palette in effect), or by the engine's own row for Agent, Task, AskUserQuestion, TodoWrite and ExitPlanMode. A `Bash` call whose command starts with `squawk send` or `squawk reply` reads `[+] Squawk to <names>  <first line of the message>` (the names from squawk's output, else the command), then the status word or the message's line count; expanded, every input field follows. |
+| `ui.render` (`UserMessage`) | Folds a message sent by another party (a row with a sender) into a button line: collapsed `[+] Message from <name>  <summary>` and the line count; expanded the `[-]` header over the engine's own row. A message squawk delivered folds whether or not it has a sender, to `[+] Squawk from <sender>  <first line>`; expanded, the header over the message text only, without squawk's framing. Any other row with no sender (your own prompts, task notifications) is left to the engine. It uses the same default, epoch and per-row toggle as the tool rows. |
 | `ui.render` (`ToolResult`) | Draws the engine's result when the call is expanded. Otherwise returns a `Box` with `display="none"`. |
 
 State atoms (declared in `types/index.d.ts` under `collapse-tools`):
@@ -68,7 +68,7 @@ State atoms (declared in `types/index.d.ts` under `collapse-tools`):
 - The plugin makes no model calls and no network calls. A row summary is the `description` the model already wrote in the call's input, read at draw time.
 - The only persisted data is the default choice, the done color, the summaries setting and the highlighting palette, stored under four plugin store keys (`collapsed`, `doneColor`, `summaries`, `syntaxPalette`) when you run `/collapse-tools`, `/collapse-tools color`, `/collapse-tools summary` or `/collapse-tools highlight`.
 - Per-call toggles and the epoch live in session state and are not written to disk by the plugin.
-- Tool-call inputs are used only to build the one-line row on screen. The plugin does not store them or log them. Shell command highlighting is display-only and adds no data.
+- Tool-call inputs, a squawk call's output and a message's text are used only to build the rows on screen. The plugin does not store them or log them. Shell command highlighting is display-only and adds no data.
 - It reads no credentials or environment variables, and does not read or write files or run processes.
 
 Full docs: https://github.com/0xnicholasy/claude-mod-collapse-tools#readme

@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import { DONE_COLOR_STORE_KEY, resolveDoneColor, validColor } from './accent'
-import { foldsMessage, messageSegments } from './message'
+import { foldsMessage, messageBody, messageRow } from './message'
 import { SYNTAX_PALETTE_STORE_KEY, resolveSyntaxPalette, validSyntaxPalette } from './shell'
-import { HINT_TEXT, collapsedSegments, expandedRows, isExpanded, keepsEngineRow } from './summary'
+import { bodyRows, parseSquawkMessage, squawkMessageRow, squawkSend, squawkSendSegments } from './squawk'
+import { HINT_TEXT, allFields, collapsedSegments, expandedRows, isExpanded, keepsEngineRow } from './summary'
 import type { Segment } from './summary'
 import { SUMMARIES_STORE_KEY, describe, resolveSummaries } from './summarize'
 
@@ -38,6 +39,9 @@ const runs = (Text: Surface['Text'], segments: readonly Segment[]) =>
       {segment.text}
     </Text>
   ))
+
+// Lines drawn under an expanded header, one Text each (a blank one, the bare indent, still draws a row).
+const rows = (Text: Surface['Text'], lines: readonly (readonly Segment[])[]) => lines.map(line => <Text>{runs(Text, line)}</Text>)
 
 const STORE_KEY = 'collapsed'
 const USAGE =
@@ -250,6 +254,18 @@ export const register: Register = (on, options) => {
         {runs(Text, segments)}
       </Button>
     )
+    // A Bash call that sends a squawk message reads as the message: who to and its first line, whatever
+    // the summaries setting; expanded, every input field follows, since the header drew none.
+    const sent = squawkSend(call.tool, call.input, call.output)
+    if (sent !== null && !open) return button(squawkSendSegments(call, sent, columns, false, doneColor))
+    if (sent !== null) {
+      return (
+        <Box flexDirection="column">
+          {button(squawkSendSegments(call, sent, columns, true, doneColor))}
+          {rows(Text, allFields(call, doneColor, palette))}
+        </Box>
+      )
+    }
     if (!open) return button(collapsedSegments(call, columns, doneColor, summary))
 
     // Expanded: the header (a Button, so a click folds it back) replaces the engine's row, and the
@@ -267,18 +283,19 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         {button(header)}
-        {fields.map(line => (
-          <Text>{runs(Text, line)}</Text>
-        ))}
+        {rows(Text, fields)}
       </Box>
     )
   })
 
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const { from, text } = e.props
-    // Another party's message folds; the person's own rows pass. `isExpanded` is not consulted: the
-    // live transcript row carries it true, so passing on it would never fold.
-    if (!foldsMessage(from)) return next(e)
+    // Another party's message folds, and so does a squawk message (which carries no sender); the person's
+    // own rows pass. A squawk message's label beats the sender's. `isExpanded` is not consulted: the live
+    // transcript row carries it true, so passing on it would never fold.
+    const squawk = parseSquawkMessage(text)
+    const row = squawk !== null ? squawkMessageRow(squawk) : foldsMessage(from) ? messageBody(text, from.name) : null
+    if (row === null) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const id = e.requestId
     const member = { ...overrideRef, id }
@@ -296,10 +313,20 @@ export const register: Register = (on, options) => {
     }
     const button = (
       <Button key={`collapse-tools:${id}`} plain onPress={toggle}>
-        {runs(Text, messageSegments(text, from.name, e.viewport?.columns, open, doneColor))}
+        {runs(Text, messageRow(row.label, row.body, e.viewport?.columns, open, doneColor))}
       </Button>
     )
     if (!open) return button
+    // Expanded, a squawk message draws its body only: the engine's row is the body inside some fifteen
+    // lines of squawk's framing.
+    if (squawk !== null) {
+      return (
+        <Box flexDirection="column">
+          {button}
+          {rows(Text, bodyRows(row.body))}
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column">
