@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { foldsMessage, lineCount, messageSegments, summaryOf } from './message'
+import { foldsMessage, lineCount, messageBody, messageRow, messageSegments, summaryOf } from './message'
 import { MARGIN, segmentsText } from './summary'
 
 const PREAMBLE =
@@ -78,4 +78,15 @@ test('a long summary is cut with ... to the room left before the count; an unkno
 test('with no summary the line is the label and the count; a nameless sender reads Message', () => {
   expect(segmentsText(messageSegments('##', 'peer', 40, false))).toBe(`[+] Message from peer${' '.repeat(36 - 21 - 6)}1 line`)
   expect(segmentsText(messageSegments('hello', '', 40, false)).startsWith('[+] Message  hello')).toBe(true)
+})
+
+test('the shared row builder takes any label over a body; a message row is it over the hand-back report', () => {
+  expect(messageBody(REPORT, 'general-purpose').label).toBe('Message from general-purpose')
+  expect(messageBody('x', '')).toEqual({ label: 'Message', body: 'x' })
+  const { label, body } = messageBody(REPORT, 'general-purpose')
+  expect(messageRow(label, body, 80, false)).toEqual(messageSegments(REPORT, 'general-purpose', 80, false))
+  // The body is taken as given: a hand-back prefix in it is text, not a preamble.
+  expect(segmentsText(messageRow('Squawk from Bob', PREAMBLE, 200, false)).startsWith('[+] Squawk from Bob  [Subagent hand-back]')).toBe(true)
+  expect(messageRow('Squawk from Bob', 'a\n\nb\n\n', 40, true, 'cyan')[1]).toEqual({ text: 'Squawk from Bob', color: 'cyan' })
+  expect(segmentsText(messageRow('Squawk from Bob', 'a\n\nb\n\n', 40, true)).endsWith('  3 lines')).toBe(true)
 })

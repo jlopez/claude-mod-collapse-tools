@@ -124,8 +124,15 @@ export function statusOf(call: Pick<CallView, 'isRunning' | 'isErrored' | 'isInt
 // Problems stay bold so they stand out; a finished call is plain.
 const isBold = (status: CallStatus): boolean => status !== 'done'
 
-const colorOf = (status: CallStatus, doneColor: string): string =>
+export const colorOf = (status: CallStatus, doneColor: string): string =>
   status === 'done' ? doneColor : STATUS_COLOR[status]
+
+// A row's name as a tool name is drawn: in the status color, bold unless the call is done.
+export const statusLabel = (text: string, status: CallStatus, doneColor: string): Segment => ({
+  text,
+  color: colorOf(status, doneColor),
+  bold: isBold(status),
+})
 
 export const statusWord = (status: CallStatus): string => (status === 'done' ? '' : status)
 
@@ -197,11 +204,10 @@ function headerRow(
   main: MainValue | null,
 ): { segments: Segment[]; shown: string | null } {
   const status = statusOf(call)
-  const color = colorOf(status, doneColor)
   const word = statusWord(status)
-  const name: Segment = { text: formatToolName(call.tool), color, bold: isBold(status) }
+  const name = statusLabel(formatToolName(call.tool), status, doneColor)
 
-  return fitRow(columns, marker, name, main, word === '' ? null : { text: word, color })
+  return fitRow(columns, marker, name, main, word === '' ? null : { text: word, color: name.color })
 }
 
 // A non-empty `summary` (the model-written description) is drawn where the arg would be; it stands
@@ -249,7 +255,7 @@ export const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g
 
 // A string value as drawn lines: its leading and trailing blank lines dropped, each line kept as sent
 // (indentation included, so code stays aligned) but for trailing whitespace and stray control characters.
-function stringLines(value: string): string[] {
+export function stringLines(value: string): string[] {
   const lines = value.split(LINE_BREAK).map(line => line.replace(CONTROL, '').trimEnd())
   const first = lines.findIndex(line => line.trim() !== '')
   if (first === -1) return []
@@ -334,6 +340,14 @@ export function expandedRows(
 
   return { header: segments, fields: fieldRows(call.tool, call.input, shown, { palette, doneColor }) }
 }
+
+// Every input field of the call, one line each as expandedRows draws them, none left out: for a row
+// whose header draws no field (a squawk message's).
+export const allFields = (
+  call: CallView,
+  doneColor: string = DEFAULT_DONE_COLOR,
+  palette: SyntaxPalette = DEFAULT_SYNTAX_PALETTE,
+): Segment[][] => fieldRows(call.tool, call.input, null, { palette, doneColor })
 
 // For these tools the expanded view also draws the engine's own ToolUse row under the header.
 export const keepsEngineRow = (tool: string): boolean => KEEP_ENGINE_ROW.has(tool)
