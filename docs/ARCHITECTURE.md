@@ -8,7 +8,7 @@ Sources: the mod's source under `.claude/skills/collapse-tools/`, the vendored A
 
 The transcript draws two rows per tool call: a `ToolUse` row (`Bash(npm run check)` with a spinner while running) and a `ToolResult` block under it (stdout, a diff, a file listing). The mod replaces the first with a one-line clickable button and hides the second. Nothing is sent to the model and nothing about the call is changed; this is a display-only mod.
 
-It also folds the message rows other parties send: a subagent's hand-back report, a teammate's message, another session's message. These are long model-written texts that the engine draws in full; the mod draws each as one line, `[+] Message from <name>  <summary>` with a right-aligned line count (see "Message rows" below).
+It also folds the message rows other parties send: a subagent's hand-back report, a teammate's message, another session's message. These are long model-written texts that the engine draws in full; the mod draws each as one line, `[+] Message from <name>  <summary>` with a right-aligned line count (see "Message rows" below). And it draws each [squawk](https://github.com/ewasserman/squawk) message, received or sent, as one line naming who, the direction and the message's first line (see "squawk rows" below).
 
 Collapsed rows (**inferred** from `collapsedSegments` and the segment tests; the exact strings below are asserted by `register.test.ts`):
 
@@ -50,6 +50,29 @@ Message rows (**inferred** from `message.ts` and the mount tests; the exact line
 - Line count: the lines of the body being summarised (the report for a hand-back, the whole text otherwise), less trailing blank lines.
 - Expanded (after a click): the `[-]` header, same text, in a column Box over `await next(e)`, the engine's own row untouched.
 - The toggle uses the same `overrides` family (keyed by `e.requestId`), `collapsed` default and `epoch` as tool rows, so a click flips that one row and `/collapse-tools` flips message rows with the tool rows. No new setting, atom or store key. The command's reply texts are unchanged ("Tool calls collapsed to one line." / "Tool calls expanded.").
+
+squawk rows (**inferred** from `squawk.ts` and the mount tests, the exact lines asserted by `squawk.test.ts` and `register.test.ts`; the three collapsed shapes and an expanded one of each kind **observed** in a live session 2026-11-22 on 2.1.309, with a stub `squawk` for the outgoing ones):
+
+```
+[+] Squawk from Bob  Hi, this is Bob's assistant.                    5 lines
+[-] Squawk from Bob  Hi, this is Bob's assistant.                    5 lines
+    Hi, this is Bob's assistant.
+    Quick question about the deploy:
+    ...
+[+] Squawk reply  Second fixture reply.                              running
+[+] Squawk to Bob  Second fixture reply.                             2 lines
+[-] Squawk to Bob  Staging is green.                                 3 lines
+    command:     squawk reply 38385976-2238-4481-aa18-49f20db6fc8a - <<'EOF'
+                 Staging is green.
+
+                 We can ship after lunch.
+                 EOF
+    description: Send squawk reply with staging status
+```
+
+- Incoming. A `UserMessage` row folds when its text is squawk's delivery text, whether or not it has a `from` (it has none, observed below): squawk's header `squawk: <kind> from <sender>, another person's assistant ...` must be the first non-empty line, or the second when the first is the engine's `Another Claude session sent a message:`. The body is between the first `----- begin <marker> -----` line after the header and the last `----- end <marker> -----` line of the same marker (to the end of the text when there is none); no begin line, no squawk message. A squawk message's label beats a `from` label. The row is the message row's (`messageRow`): `Squawk from <sender>` in the done color, the body's first non-empty line cleaned as `summaryOf` cleans, the body's line count. Expanded: the `[-]` header, then the body only, one `Text` per line indented 4 (`FIELD_INDENT`), not dim, each line cleaned as `stringLines` cleans a field (indentation kept, blank lines inside kept as rows of bare indent, which draw a blank row: observed); the engine's row is not drawn.
+- Outgoing. A `Bash` `ToolUse` row whose command, after leading whitespace, starts with `squawk send` or `squawk reply` and whitespace. Label `Squawk to <names>`: the names from every `Sent to <name> and delivered ...`/`Sent to <name>: queued ...` line of the output's stdout (in order, each once), else the contact a `send` names, else `Squawk reply` (or `Squawk send` when even the contact could not be read); it takes a tool name's color and bold rule. The first line is the message's: the text positional (quotes removed, escapes undone), else the first clause's heredoc, replaced by the text squawk reports after ` Your user edited the text before sending; what was sent is:` when the output reports exactly one message sent. It is drawn whatever the summaries setting. The tail is the status word while the call is not done, else the dim line count of the message. Expanded: the header, then every input field as `expandedRows` draws them, none skipped.
+- The toggle is the same `overrides` family (keyed by message id or `tool_use_id`), `collapsed` default and `epoch`. No new setting, atom or store key.
 
 Controls:
 
@@ -97,9 +120,9 @@ The module runs in its own environment: no DOM, no Node, no `require`, no timers
 | `session.start` | once per fresh load of the plugin, never on `/clear`; also on a hot reload | `{ cwd }` | load saved settings, register the command, toast |
 | `turn.start` | when a model turn begins, before its first model call | `{ turnId }`, observe only | re-load settings after `/clear` reset the atoms |
 | `command.run` with `{ command: 'collapse-tools' }` | when the person types `/collapse-tools ...` | nothing (a registered command has no core) | the command |
-| `ui.render` with `{ component: 'ToolUse' }` | when the engine is about to draw a tool row; once per input value (props, viewport width), on plugin load, on `$.ui.invalidate`, and when a `$.state` value it read changes | the engine's own drawing | the one-line row |
+| `ui.render` with `{ component: 'ToolUse' }` | when the engine is about to draw a tool row; once per input value (props, viewport width), on plugin load, on `$.ui.invalidate`, and when a `$.state` value it read changes | the engine's own drawing | the one-line row, a squawk send/reply call's included |
 | `ui.render` with `{ component: 'ToolResult' }` | same, for the result block | the engine's result drawing | hide or show the result |
-| `ui.render` with `{ component: 'UserMessage' }` | same, for a transcript row carrying a message (the person's prompt, a notification, another party's message) | the engine's own row | fold a row sent by another party into one line |
+| `ui.render` with `{ component: 'UserMessage' }` | same, for a transcript row carrying a message (the person's prompt, a notification, another party's message) | the engine's own row | fold a row sent by another party, or a squawk message, into one line |
 
 `ui.render` is one event for every component with a render site. The input is discriminated by `component`; `e.requestId` is the instance (the `tool_use_id` for tool rows, the message id for `UserMessage`), `e.viewport` carries `columns` and `rows` when the surface has measured. A tree the hook returns is validated; an invalid tree or a throw while drawing falls back to the engine's own drawing, with a line in the debug log (and in the transcript while the folder is hot-reloaded).
 
@@ -135,13 +158,14 @@ Plugin options (`userConfig`) are a fourth, read-only input: `register(on, optio
 | `.claude-plugin/plugin.json` | 41 | manifest, version `0.6.0`, three `userConfig` fields (`doneColor` string default `white`, `summaries` boolean default `true`, `syntaxPalette` choice default `weight`), `types` pointer |
 | `.claude-plugin/icon.png` | | marketplace icon |
 | `hooks/hooks.json` | 1 | names `./register.tsx` |
-| `hooks/register.tsx` | 323 | all `$` access: atoms, store I/O, the six hooks, JSX |
-| `hooks/summary.ts` | 344 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, `fitRow` (the row budgeting both row kinds share), truncation, the keep-engine-row set, `isExpanded` |
-| `hooks/message.ts` | 61 | pure: `foldsMessage`, the hand-back body, `summaryOf`, `lineCount`, `messageSegments` |
+| `hooks/register.tsx` | 351 | all `$` access: atoms, store I/O, the six hooks, JSX |
+| `hooks/summary.ts` | 358 | pure: arg picking, status, segment building for the collapsed row and the expanded header and field lines, `fitRow` (the row budgeting every row kind shares), `statusLabel`, `stringLines`, `allFields`, truncation, the keep-engine-row set, `isExpanded` |
+| `hooks/message.ts` | 84 | pure: `foldsMessage`, the hand-back body, `firstLineOf`, `countOf`, `summaryOf`, `lineCount`, `messageBody`, `messageRow` (the row every message row is built by), `messageSegments` |
+| `hooks/squawk.ts` | 277 | pure: `parseSquawkMessage`, `squawkMessageRow`, `bodyRows` (incoming); `parseSquawkSend` and its clause word reader, `sentTo`, `editedText`, `squawkSend`, `squawkSendSegments` (outgoing) |
 | `hooks/shell.ts` | 376 | pure: `SHELL_TOOLS`, `isShellTool`, the one shell lexer (`scanShell`) and its two consumers: `formatShell` (one clause per line at top-level `&&`, `||`, `|`, `|&`, `;`) and `tokenize` (a clause line into `command`, `operator`, `string`, `variable`, `plain` runs); the palette tables, `styleTokens`, `resolveSyntaxPalette` |
 | `hooks/summarize.ts` | 38 | pure: the described-tools allowlist, `cleanSummary`, `describe`, `resolveSummaries` |
 | `hooks/accent.ts` | 21 | pure: color validation (`#rrggbb`, named, `...Bright`, `claude`), `resolveDoneColor` |
-| `hooks/*.test.ts` | 1211 | 100 tests across 6 files under `claude plugin test` |
+| `hooks/*.test.ts` | 1505 | 121 tests across 7 files under `claude plugin test` |
 | `types/index.d.ts` | 13 | the state contract |
 | `README.md` (plugin folder) | | what the plugin directory review asks for: a per-hook description |
 
@@ -189,6 +213,9 @@ ui.render { component: 'ToolUse', requestId: tool_use_id, props: { tool, input, 
   ├─ summary = resolveSummaries(summariesOn, options.summaries) ? describe(tool, input) : null
   ├─ palette = resolveSyntaxPalette(syntaxPaletteOverride, configPalette)
   ├─ button(segments) = <Button key=`collapse-tools:${id}` plain onPress={toggle}> {segments → <Text/>} </Button>
+  ├─ sent = squawkSend(tool, input, output)                                      (null unless Bash running squawk send/reply first)
+  ├─ if sent && !open:       return button(squawkSendSegments(call, sent, ..., false))
+  ├─ if sent:                return <Box column> {button(squawkSendSegments(..., true))} {allFields(call) → <Text/>} </Box>
   │
   ├─ if !open:               return button(collapsedSegments(..., summary))       (engine row replaced, next() never called)
   ├─ { header, fields } = expandedRows(..., summary, palette)
@@ -220,13 +247,16 @@ The field lines sit outside the Button, as siblings in the column Box, because a
 ```
 ui.render { component: 'UserMessage', requestId: message id, props: { text, origin, isExpanded, task?, from?, onScreen? }, viewport? }
   │
-  ├─ if from is absent:  return next(e)                         (the person's prompts, notifications; before any read, so no subscription)
+  ├─ squawk = parseSquawkMessage(text)
+  ├─ row = squawk ? squawkMessageRow(squawk) : from ? messageBody(text, from.name) : null      ({ label, body })
+  ├─ if row is null:  return next(e)                            (the person's prompts, notifications; before any read, so no subscription)
   ├─ read collapsed, epoch, overrides[requestId], doneColorOverride                      (4 subscriptions)
   ├─ open = overrides[id].epoch === epoch ? overrides[id].open : !collapsed
-  ├─ button = <Button key=`collapse-tools:${requestId}` plain onPress={toggle}> {messageSegments(text, from.name, columns, open, doneColor) → <Text/>} </Button>
+  ├─ button = <Button key=`collapse-tools:${requestId}` plain onPress={toggle}> {messageRow(row.label, row.body, columns, open, doneColor) → <Text/>} </Button>
   │
-  ├─ if !open: return button                                                           (engine row replaced, next() never called)
-  └─ else:     return <Box column> {button} {await next(e)} </Box>
+  ├─ if !open:   return button                                                         (engine row replaced, next() never called)
+  ├─ if squawk:  return <Box column> {button} {bodyRows(row.body) → <Text/>} </Box>   (the body only; next() never called)
+  └─ else:       return <Box column> {button} {await next(e)} </Box>
 ```
 
 `messageSegments` uses the same row builder as the tool rows (`fitRow` in `summary.ts`, which `headerRow` now calls too): marker, name segment, dim arg, right-aligned tail. For a tool row the tail is the status word (none when done), for a message row the dim line count. `toggle` is the tool row's, on the message's family member. The `runs` helper that turns segments into `Text` is shared by both hooks.
@@ -248,6 +278,26 @@ Decided with the user before implementation.
 - `e.requestId` is the message id. The transcript row's id ends `-000000000000` (the person's prompts' ids do too) and carries `isExpanded: true` on every draw. One more instance of the same message was drawn once under a plain uuid with `isExpanded: false`; where the engine draws that one was not established. So `isExpanded` does not tell the normal fullscreen view from ctrl+o for these rows, and the hook ignores it: a first build that passed through on `isExpanded: true` folded nothing in a live session.
 - The person's own prompts arrive with `origin.kind: 'composer'`, no `from`, `isExpanded: true`.
 - `$.store.set` works from inside a render hook. This mod does not use that.
+
+### Decision note: squawk rows
+
+Decided with the user before implementation.
+
+- **One line per message.** A render hook draws one row at a time, so an exchange cannot fold into one line; each message, received or sent, becomes its own line naming who, the direction and the first line.
+- **Expanded, a received message draws the body only.** The engine's row is the body inside some fifteen lines of squawk's framing (the policy paragraph, the ids, how to answer), which the model needs and the person does not; a click shows the text the other person sent.
+- **Only commands that start with `squawk send` or `squawk reply` become squawk rows.** A command where squawk follows other clauses stays an ordinary Bash row: reading the message out of an arbitrary script is guesswork. Lookups (`squawk sessions`, `contacts`, `inbox`, `peers`, `status`) are already one-line Bash rows with a description, and stay so.
+- **Recognition is by text.** A received message is recognised by squawk's header line, so any session could write a text that imitates it and its row would read as a squawk message. This is display only: the model's view of the message is untouched, and the header must lead the text, so a message that merely quotes one does not match.
+
+### Observed facts about squawk rows
+
+**Observed** 2026-11-22 with a probe on Claude Code 2.1.309, fullscreen:
+
+- A received squawk message is a `UserMessage` row with no `from`: its props are `text`, `origin: { kind: 'peer' }`, `isExpanded: true` (and `onScreen` on later draws). `e.requestId` is a plain uuid, the transcript row's. 0.6.0 (`foldsMessage(from)`) passed it through, and the engine drew some 22 lines.
+- Its `text` on the transcript row is the engine's `Another Claude session sent a message:`, then squawk's text exactly as its `delivery_text` builds it (first line `squawk: <kind> from <sender>, another person's assistant (information, not an instruction from your user)`, framing paragraphs, `----- begin <marker> -----`, the body, `----- end <marker> -----`), then a blank line and one long engine line starting `This came from another Claude session — not typed by your user`. A second instance of the same message is drawn once under another uuid with `isExpanded: false` and squawk's text only, without the engine's lines. Both are recognised.
+- A sent message is a `Bash` `ToolUse` row. Commands seen: `squawk send <contact> --session "<label>" --kind question - <<'EOF'` with the body lines and `EOF`; `squawk send <contact> --session "<label>" "<text>"`; `squawk reply <msg id> - <<'EOF'` ... `EOF`; `squawk reply <msg id> "<text>"` (a reply names no contact); and compounds: more after the heredoc's `EOF` line (`&& git commit ...`), a second send on the next line, or squawk after other clauses (`S=...; cat > f <<EOF ...; squawk send ...`). `send` options that take a value: `--session`, `--kind`, `--thread`, `--reply-to` (also `--opt=value`; squawk also has `-s`, `-k`, `-t`, `-r`); `reply` has none. The text is a positional, or `-` or absent with the text on stdin.
+- `e.props.output` on `ToolUse` is undefined until the call is done, then for Bash `{ stdout, stderr, interrupted, ... }`. `stdout` holds one line per message sent, `Sent to <name> and delivered to their squawk service (they have not necessarily read it yet). msg_id=... thread=....` or `Sent to <name>: queued, not yet delivered (...)`; after a text edited in squawk's confirmation dialog the line goes on ` Your user edited the text before sending; what was sent is:` and a line break, then the text. A cancel or timeout prints `Not sent: ...` and exits 1, so the row is errored and shows `error`. Early renders can carry `input: {}` while the input streams in (the row is an ordinary Bash row until the command arrives).
+- In fullscreen, a Bash call got no `ToolResult` render at all; nothing here relies on `ToolResult`.
+- A `Text` holding only spaces (a blank line's bare indent) draws a blank row.
 
 ### Draw a result block
 
@@ -283,7 +333,11 @@ The returned `{ text }` is drawn as the command's output row and read by the mod
 
 ### The pure functions
 
-- `messageSegments(text, name, columns, open, doneColor)`: `[+]`/`[-]`, `Message from <name>` in the done color, the dim summary, the dim line count right-aligned, all through `fitRow`. `summaryOf` and `lineCount` read the body (`bodyOf`: a hand-back's report, else the whole text); `foldsMessage(from)` is true when a sender is present.
+- `messageRow(label, body, columns, open, doneColor)`: `[+]`/`[-]`, the label in the done color, the body's first line dim (`firstLineOf`: heading marks stripped, control characters dropped, whitespace collapsed), the dim line count (`countOf`, trailing blank lines dropped) right-aligned, all through `fitRow`; every message row, squawk's included, is built by it. `messageSegments(text, name, ...)` is `messageRow` over `messageBody(text, name)`: `Message from <name>` and the body (`bodyOf`: a hand-back's report, else the whole text). `summaryOf` and `lineCount` are `firstLineOf` and `countOf` of that body; `foldsMessage(from)` is true when a sender is present.
+- `parseSquawkMessage(text)`: `{ sender, kind, body }` or null, by the header and marker rules in section 1; lines split on any line break, CRLF tolerated. `bodyRows(body)`: `stringLines(body)`, each line one `Segment` with the 4-column indent prepended.
+- `parseSquawkSend(command)`: `{ verb, to, body }` or null. A small word reader takes the first clause (to the line's end or a top-level `;`, `&`, `|`), removing single and double quotes, undoing backslash escapes (inside double quotes only `\"`, `\\`, `\$`, a backtick and a line continuation), dropping redirections with their target and a `#` comment, and taking a `<<`, `<<-`, `<<'EOF'` or `<<"EOF"` delimiter out of the words. Options are skipped (`send`'s value options with their value), `--` ends them, `-` is a positional. `to` is `send`'s first positional; `body` the second positional unless `-`, else the heredoc's lines (from the next line up to the delimiter line, tabs stripped for `<<-`), else ''. An unterminated quote gives an empty body; it never throws.
+- `sentTo(output)`, `editedText(output)`: stdout is the output's string `stdout`, or the output when it is a string; the sent lines are read before the edited marker only, so an edited text cannot add recipients. `squawkSend(tool, input, output)` combines them into `{ label, body }` for a Bash call, null otherwise; `squawkSendSegments` builds the row through `fitRow` with `statusLabel` for the name.
+- `allFields(call, doneColor, palette)`: `fieldRows` with nothing skipped. `statusLabel(text, status, doneColor)`: the name segment in the status color, bold unless done, which `headerRow` uses too.
 - `fitRow(columns, marker, name, main, tail)`: the budgeting both row kinds share (width less margin, the arg drawn only if 4 columns remain, the tail right-aligned, a final clip). `headerRow` is a thin wrapper that supplies the tool name and status word.
 - `collapsedSegments(call, columns, doneColor, summary?)`: a thin wrapper over the private `headerRow` with the `[+]` marker. `headerRow` builds the marker, the name, then budgets `width - name - GAP - wordRoom` for the argument. The argument is drawn only if at least 4 columns remain. The status word is padded to the right edge. A final `clipSegments` guarantees the total fits. It also reports which field it drew whole (the summary stands for `description`, whole only when it equals the trimmed raw `input.description`).
 - `expandedRows(call, columns, doneColor, summary?, palette = 'weight')`: returns `{ header, fields }`. `header` is `headerRow` with `[-]`; without a summary the picked arg goes through `expandedArg`, which keeps the first line of a multi-line value and counts it whole only when that line equals the trimmed raw value. `fields` (from `fieldRows`) is one `Segment[]` per drawn line: `{ text: '    ' }`, `{ text: 'key:' + pad, color: 'suggestion' }`, `{ text: value, dim: true }`, and `[{ indent }, { line, dim }]` for each continuation line. Order is `ARG_FIELDS` then insertion order; the field `headerRow` drew whole is skipped; values are uncut. String values go through `stringLines`: split on CRLF, LF or a lone CR, control characters but tab dropped, each line `trimEnd`ed, leading and trailing blank lines dropped, leading indentation kept. A shell command split into clauses replaces the one `{ value, dim }` run of each line with the styled runs of `styleTokens`.
@@ -305,7 +359,7 @@ npm run check  =  claude plugin validate .claude/skills/collapse-tools
                && claude plugin test .claude/skills/collapse-tools
 ```
 
-**Observed** on this branch: all three pass, 100 tests across 6 files in about a second.
+**Observed** on this branch: all three pass, 121 tests across 7 files in about a second.
 
 - `validate` parses the manifest and the module source the way the engine will, and lists every event hooked, every `$` call and every `$.state` key against the contract.
 - `tsc` type-checks against `vendor/claude-code/claude-code.d.ts`. `tsconfig.json` sets `types: []` (no `@types/node`; the module has no Node), `jsx: react` with `jsxFactory: h`, `moduleResolution: bundler`, strict plus `noUncheckedIndexedAccess`, and includes the vendor file, `hooks/`, `types/` and the tests.
@@ -389,7 +443,7 @@ Places a change plugs in, and rough edges seen while tracing.
 - **Which tools keep the engine row when expanded.** `KEEP_ENGINE_ROW` in `summary.ts`.
 - **ctrl+o and `--verbose`.** `ToolUse` and `ToolResult` props carry `isExpanded?: boolean` as of 2.1.309 (absent in the vendored 2.1.295 types). The documented pattern is: a hook that draws a compact row returns `next(e)` when `isExpanded` is true. One guard at the top of each render hook removes the "ctrl+o does not unfold these rows" limitation. It needs the vendored types regenerated, and a decision about whether to keep the fold inside the ctrl+o view too.
 - **Tool groups.** The engine folds runs of reads and searches into a `ToolGroup` row (`Read 3 files`) that this mod does not hook. A `ToolGroup` hook can set `isExpanded` to unfold a group; the rows it unfolds into are `ToolUse` instances this mod's hook then sees. In fullscreen mode no `ToolGroup` is drawn at all.
-- **Result content.** `e.props.output` is available on both `ToolUse` and `ToolResult` and unused. A collapsed row could show an exit code, a line count or a diff stat without expanding.
+- **Result content.** `e.props.output` is available on both `ToolUse` and `ToolResult`; only a squawk send/reply row reads it (the recipients). A collapsed row could show an exit code, a line count or a diff stat without expanding.
 - **Status.** The fallback color and bold rule live in `STATUS_COLOR`, `isBold`, `colorOf`. A spinner glyph on running rows would be a `Text` segment; nothing animates without `$.clock` and an invalidate, which `ui.render` docs allow ("a clock invalidates").
 - **Per-call persistence.** Clicks are session state by design. Persisting them means writing the family member to `$.store` too, keyed by `tool_use_id`; a store is capped at 4 MiB.
 - **Keyboard.** `Button` takes a `hotkey` (one digit or lowercase letter) that works while the plugin's site holds focus, and an `action` naming an engine keybinding whose chord presses it from the prompt. Neither is used; the mod is mouse-only outside `/collapse-tools`.

@@ -8,7 +8,7 @@
   <a href="#installation">Install</a> · <a href="#usage">Usage</a> · <a href="#how-it-works">How it works</a>
 </div>
 
-Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are still `collapse-tools`. A toast at session start (once) tells you how. The tool name of a finished call is white by default, and you can change that color. Messages sent by other agents and sessions, such as a subagent's hand-back report, fold to one line too.
+Claude Fold is a Claude Code plugin that draws each tool-call row in the transcript as one line, `[+] Name  arg`, to save screen rows. Click a row to expand it into a `[-]` header, one line per input field and the normal output, or run `/collapse-tools` to toggle all calls at once. The plugin id and command are still `collapse-tools`. A toast at session start (once) tells you how. The tool name of a finished call is white by default, and you can change that color. Messages sent by other agents and sessions, such as a subagent's hand-back report, fold to one line too, and so does each [squawk](https://github.com/ewasserman/squawk) message, received or sent.
 
 ## What it looks like
 
@@ -42,6 +42,14 @@ A message from another party, folded (the label is in the completed-call color, 
 [+] Message from general-purpose  Widget throughput: results         4 lines
 ```
 
+A squawk exchange, one line per message (who, the direction and the first line of the message):
+
+```
+[+] Squawk from Bob  Hi, this is Bob's assistant.                     5 lines
+[+] Squawk to Bob  Staging is green.                                  3 lines
+[+] Squawk reply  Second fixture reply.                               running
+```
+
 ## Features
 
 - One-line rows. Each call reads `[+] Name  arg`. The name of a done call is white (not bold) by default and you can change it; a running call is yellow, an error red and an interrupted call gray, all three bold. A status word (`running`, `error`, `interrupted`) is right-aligned at the end of the row, in the same color; a done call shows none.
@@ -55,6 +63,7 @@ A message from another party, folded (the label is in the completed-call color, 
 - Collapsed results. The result block of a collapsed call is not drawn.
 - Tool groups such as `Read 3 files` are left to the engine.
 - Message rows. A message sent by another agent or session (a subagent's final report, a teammate, another session) draws as `[+] Message from <name>  <summary>` with its line count right-aligned, instead of 50 to 200 lines of text. Click to expand: the `[-]` header and the engine's own row. `/collapse-tools` flips these rows together with the tool rows.
+- squawk rows. A message [squawk](https://github.com/ewasserman/squawk) delivered from another person's session draws as `[+] Squawk from <sender>  <first line>` instead of some twenty lines of framing; expanded, it shows the message text only. A `squawk send` or `squawk reply` call draws as `[+] Squawk to <names>  <first line>`; expanded, it lists the call's fields like any `Bash` row.
 
 ## Installation
 
@@ -116,19 +125,23 @@ Shell command highlighting: when a `Bash` or `Monitor` command is laid out one c
 
 Message rows: a transcript row whose message was sent by another party (the row carries a sender: a subagent's hand-back report, a teammate, another session) folds to `[+] Message from <name>  <summary>`, the label in the completed-call color, the summary dim and cut to the width left, and a dim line count (`214 lines`, `1 line`) right-aligned. The summary is the first non-empty line of the text, with leading markdown heading marks (`## `) removed, control characters dropped and whitespace collapsed; for a subagent hand-back it is the first non-empty line of the report, after the engine's preamble (`[Subagent hand-back] ... The report follows:`). The count is the lines of that same text (the report for a hand-back), less trailing blank lines. Expanded, the row is the `[-]` header over the engine's own row, untouched. Your own prompts and task notifications carry no sender and are left alone. A message row toggles with the same per-row state, default and `/collapse-tools` as the tool rows; there is no separate setting.
 
+squawk rows: a transcript row whose text is a message squawk delivered (squawk's header line `squawk: <kind> from <sender>, another person's assistant ...` is its first non-empty line, or its second after the engine's own `Another Claude session sent a message:`) folds to `[+] Squawk from <sender>  <first line>`, whether or not the row carries a sender, with the same styling, width and line count as other message rows. The first line and the count are those of the message text only, which squawk places between two marker lines. Expanded, the `[-]` header is followed by that text, indented 4 columns, not dim, blank lines kept; squawk's framing and the engine's own row are not drawn. A row that only quotes a squawk header further down is not a squawk message.
+
+A `Bash` call whose command starts with `squawk send` or `squawk reply` folds to `[+] Squawk to <names>  <first line>`, the label in the status color as a tool name is. The names are the contacts squawk reports it sent to (`Sent to <name> and delivered ...` or `Sent to <name>: queued ...`), else the contact a `send` names; a reply still running, or one that failed, reads `Squawk reply`. The first line is that of the message text: the quoted text argument, else the command's heredoc, else, when you edited the text in squawk's confirmation dialog, the text squawk reports as sent. It is shown whatever the row-summaries setting says. While the call runs, or when it failed, the status word is right-aligned; once done, the message's line count. Expanded, the header is followed by every input field, `command` and `description` included. A command that runs squawk after other clauses (`cd x && squawk send ...`) and the other squawk commands (`squawk inbox`, `squawk contacts`, ...) stay ordinary `Bash` rows.
+
 Tools that keep the engine's row: for `Agent`, `Task`, `AskUserQuestion`, `TodoWrite` and `ExitPlanMode` the expanded view is the header followed by the engine's own row, because that row may carry more than `Name(arg)`. These show no field list. Every other tool, including `Edit` and `Write` (their diff is part of the tool's output, which the result block draws), shows the header and the field list.
 
 ## How it works
 
-The plugin registers six hooks in `.claude/skills/collapse-tools/hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the message-row logic (what folds, summary line, line count) is in `hooks/message.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
+The plugin registers six hooks in `.claude/skills/collapse-tools/hooks/register.tsx`. The pure logic (argument picking, status, row building, expand rule) is in `hooks/summary.ts`; the summary logic (the allowlist, `describe`, text cleaning, setting precedence) is in `hooks/summarize.ts`; the message-row logic (what folds, summary line, line count) is in `hooks/message.ts`; the squawk logic (reading a delivered message, a `squawk send`/`reply` command and its output) is in `hooks/squawk.ts`; the shell lexer (clause layout, tokenizer, highlighting palettes) is in `hooks/shell.ts`.
 
 | Hook | What it does |
 |---|---|
 | `session.start` | Loads the saved default, done color, summaries setting and highlighting palette from the plugin store, registers the `/collapse-tools` command and, once per session, shows the click-hint toast. |
 | `turn.start` | Reloads the saved default and, when unset, the done color, the summaries setting and the highlighting palette. `/clear` resets the atoms and no `session.start` follows, so this restores the choice on the next turn. |
 | `command.run` (`collapse-tools`) | With `color ...`, sets or resets the done color; with `summary on\|off`, sets the summaries setting; with `highlight ...`, sets or resets the highlighting palette. Otherwise flips the default, increments the epoch (which invalidates per-call toggles), saves the default to the store and returns the reply text. |
-| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (a one-line shell command is laid out one clause per line and highlighted under the palette in effect) (or by the engine's own row for the tools listed above). |
-| `ui.render` (`UserMessage`) | Folds a message sent by another party (a row with a sender) into a button line: collapsed `[+] Message from <name>  <summary>` and the line count; expanded the `[-]` header over the engine's own row. A row with no sender (your own prompts, task notifications) is left to the engine. It uses the same default, epoch and per-row toggle as the tool rows. |
+| `ui.render` (`ToolUse`) | Replaces the call row with a button line. Collapsed it is the `[+]` row, showing the call's `description` when summaries are on and the tool has one; expanded it is the `[-]` header, followed by one line per input field (a one-line shell command is laid out one clause per line and highlighted under the palette in effect) (or by the engine's own row for the tools listed above). A `squawk send` or `squawk reply` call reads `[+] Squawk to <names>  <first line>`, expanded over every input field. |
+| `ui.render` (`UserMessage`) | Folds a message sent by another party (a row with a sender) into a button line: collapsed `[+] Message from <name>  <summary>` and the line count; expanded the `[-]` header over the engine's own row. A squawk message folds too, sender or not: `[+] Squawk from <sender>  <first line>`, expanded the header over the message text only. Any other row with no sender (your own prompts, task notifications) is left to the engine. It uses the same default, epoch and per-row toggle as the tool rows. |
 | `ui.render` (`ToolResult`) | Draws the engine's result when the call is expanded. Otherwise returns a `Box` with `display="none"`. |
 
 State atoms (declared in `types/index.d.ts` under `collapse-tools`):
@@ -150,7 +163,7 @@ State atoms (declared in `types/index.d.ts` under `collapse-tools`):
 - The plugin makes no model calls and no network calls. A row summary is the `description` the model already wrote in the call's input, read at draw time.
 - The only persisted data is the default choice, the done color, the summaries setting and the highlighting palette, stored under four plugin store keys (`collapsed`, `doneColor`, `summaries`, `syntaxPalette`) when you run `/collapse-tools`, `/collapse-tools color`, `/collapse-tools summary` or `/collapse-tools highlight`.
 - Per-call toggles and the epoch live in session state and are not written to disk by the plugin.
-- Tool-call inputs are used only to build the one-line row on screen. The plugin does not store them or log them. Shell command highlighting is display-only: it styles the command's text at draw time and adds no data.
+- Tool-call inputs, a squawk call's output and a message's text are used only to build the rows on screen. The plugin does not store them or log them. Shell command highlighting is display-only: it styles the command's text at draw time and adds no data.
 - It reads no credentials or environment variables, and does not read or write files or run processes.
 
 ## Requirements
@@ -176,6 +189,7 @@ npm run check
 - Clicking a row needs a fullscreen terminal or the desktop app; elsewhere use `/collapse-tools`.
 - ctrl+o does not unfold these rows, tool rows and message rows alike.
 - Message rows fold every message that carries a sender, not only subagent hand-backs. The summary line skips the engine's hand-back preamble, which relies on its wording (`[Subagent hand-back] ... The report follows:`); when that differs the first line is used. Seen live on Claude Code 2.1.309 only.
+- squawk rows are recognised by their text: squawk's header line in a received message, `squawk send`/`squawk reply` at the start of a command. Any session could write a text that looks like a squawk message; the row would then read as one. This changes only what is drawn: the model reads the message as before. The parsing follows squawk's wording, seen live on Claude Code 2.1.309 only.
 - Some spacing may remain between consecutive collapsed rows (a transcript margin a plugin cannot change).
 - `Agent`, `Task`, `AskUserQuestion`, `TodoWrite` and `ExitPlanMode` keep the engine's row under the header when expanded.
 - Not verified in a live session: how the rows look, whether a click lands on the row on every surface, and whether the theme keys used for status colors (`success`, `error`, `warning`, `inactive`) read as green, red, yellow and gray in every theme.
